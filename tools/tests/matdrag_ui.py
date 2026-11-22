@@ -153,6 +153,11 @@ def drag_report():
 
 
 def drag_cancel(kind):
+    """End the running drag without a drop: move away and press ESC, or release below the last row.
+
+    kind: "esc" cancels with the ESC key; anything else releases below the Object Manager rows (no target).
+    Sets _st["target"] to None.
+    """
     x, y = _st["xy"]
     r = om_region()
     if kind == "esc":
@@ -170,6 +175,7 @@ def drag_cancel(kind):
 
 
 def slots():
+    """Every object's material slots in the scene. Returns {object name: [slot material names]}."""
     return {o.name: [s.material.name if s.material else None for s in o.material_slots] for o in bpy.data.objects}
 
 
@@ -181,11 +187,15 @@ def view_area():
 
 
 def view_region():
+    """The largest 3D view's window region. Returns the Region."""
     return next(r for r in view_area().regions if r.type == "WINDOW")
 
 
 def obj_view_xy(name):
-    """Window position of an object's centre projected into the 3D view, or None when it is out of view."""
+    """Window position of an object's centre projected into the 3D view.
+
+    name: the object's name. Returns the window (x, y), or None when the object is out of view.
+    """
     from bpy_extras import view3d_utils
     r = view_region()
     ob = bpy.data.objects[name]
@@ -194,6 +204,11 @@ def obj_view_xy(name):
 
 
 def drag_to_view(obj, mid_shot=None):
+    """Move the running drag onto an object in the 3D view and release there (the drop ray-casts the surface).
+
+    obj: the Object under the target pixel; mid_shot: optional screenshot name taken mid-drag. When the object
+    is out of view the drag is released at its start (a cancel). Sets _st["target"].
+    """
     x, y = _st["xy"]
     pos = obj_view_xy(obj)
     if pos is None:                             # out of view: release where the drag started (a cancel, no drop)
@@ -211,7 +226,10 @@ def drag_to_view(obj, mid_shot=None):
 
 
 def empty_view_xy():
-    """A window position in the 3D view whose ray hits no object, or None."""
+    """Scan the 3D view for a window position whose drop ray hits no object.
+
+    No arguments. Returns the window (x, y), or None when every scanned pixel hits something.
+    """
     from blenda4d import assets
     w = bpy.context.window_manager.windows[0]
     vp = view_area()
@@ -227,6 +245,10 @@ def empty_view_xy():
 
 
 def drag_to_empty_view():
+    """Move the running drag to a spot in the 3D view where the ray hits nothing and release there.
+
+    Falls back to the view's header (outside its canvas) when no empty pixel is found. Sets _st["target"] to None.
+    """
     x, y = _st["xy"]
     pos = empty_view_xy()
     if pos is None:                             # no empty pixel found: release over the view's header instead
@@ -241,6 +263,7 @@ def drag_to_empty_view():
 
 
 def add_green():
+    """Add a third material to the sample scene. No arguments; returns nothing."""
     bpy.data.materials.new("Green")
 
 
@@ -309,6 +332,7 @@ PLAN += [lambda: switch.set_mode(True)] + W + [
                   "switch on: drag registration is back"),
     lambda: shot("matdrag_on")]
 def finish():
+    """Last plan step: print the result, write done.txt, cancel any stray drag and quit Blender. No arguments."""
     print("MATDRAG UI RESULT", "PASS" if not FAIL else f"FAIL {FAIL}", flush=True)
     done()                                      # the done.txt the runner waits for
     try:
