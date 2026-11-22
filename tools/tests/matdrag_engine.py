@@ -19,12 +19,20 @@ FAIL = []
 
 
 def check(cond, what):
+    """Record one test result.
+
+    cond: the condition that must hold; what: the description printed (and kept on failure).
+    """
     print(("ok   " if cond else "FAIL ") + what, flush=True)
     if not cond:
         FAIL.append(what)
 
 
 def emission_mat(name, rgba):
+    """A material that renders as a flat colour (an emission node), so a render needs no light.
+
+    name: the material's name; rgba: its colour. Returns the new Material.
+    """
     m = bpy.data.materials.new(name)
     m.use_nodes = True
     nt = m.node_tree
@@ -36,6 +44,10 @@ def emission_mat(name, rgba):
 
 
 def render(ob):
+    """Render one object alone at 32x32 and read the pixels back.
+
+    ob: the only object left visible for the render. Returns the flat list of RGBA pixels.
+    """
     for o in bpy.data.objects:
         if o.type == "MESH":
             o.hide_render = o != ob
@@ -49,10 +61,18 @@ def render(ob):
 
 
 def diff(a, b):
+    """Mean absolute difference between two pixel lists.
+
+    a, b: the pixel lists to compare. Returns a value near 0 when they match.
+    """
     return sum(abs(x - y) for x, y in zip(a, b)) / max(len(a), 1)
 
 
 def main():
+    """Run the whole headless test: registration in Blenda mode, the drop semantics, the settings, the switch.
+
+    No arguments; prints one line per check and the final MATDRAG RESULT.
+    """
     blenda4d.register()
     switch.set_mode(True)
     wm = bpy.context.window_manager

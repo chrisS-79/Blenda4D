@@ -24,25 +24,38 @@ FAIL = []
 
 
 def check(cond, what):
+    """Record one test result.
+
+    cond: the condition that must hold; what: the description printed (and kept on failure).
+    """
     print(("ok   " if cond else "FAIL ") + what, flush=True)
     if not cond:
         FAIL.append(what)
 
 
 def mm_area():
+    """The Material Manager area of the test window. Returns the Area."""
     return roles.areas(bpy.context.window_manager.windows[0].screen, "MATERIALS")[0]
 
 
 def mm_region():
+    """The Material Manager area's window region. Returns the Region."""
     return next(r for r in mm_area().regions if r.type == "WINDOW")
 
 
 def mat_index(name):
+    """Index of a material in the manager's current list (newest first, after the search filter).
+
+    name: the material's name. Returns its row index; raises ValueError when it is not listed.
+    """
     return [m.name for m in matman.materials(bpy.context)].index(name)
 
 
 def mat_xy(i):
-    """Window position of the middle of material i's own row/tile (the inverse of matdrag.mat_at)."""
+    """Window position of the middle of material i's own row/tile (the inverse of matdrag.mat_at).
+
+    i: the material's index in matman.materials. Returns the window (x, y) to press on.
+    """
     wm = bpy.context.window_manager
     r = mm_region()
     ui = bpy.context.preferences.system.ui_scale
@@ -75,6 +88,10 @@ def mat_xy(i):
 
 
 def calib():
+    """Print the manager's region and check mat_at finds every listed material at its computed position.
+
+    No arguments; runs in the current view, preview size and search filter.
+    """
     wm = bpy.context.window_manager
     w = bpy.context.window_manager.windows[0]
     r = mm_region()
@@ -93,6 +110,10 @@ _st = {}
 
 
 def drag_start(name):
+    """Press on a material in the manager and move just past the drag threshold, starting blenda4d.mm_drag.
+
+    name: the material to drag. The press position is kept in _st["xy"] for the drag_to* helpers.
+    """
     i = mat_index(name)
     x, y = mat_xy(i)
     _st["mat"] = name
@@ -104,6 +125,11 @@ def drag_start(name):
 
 
 def drag_to(obj, mid_shot=None):
+    """Move the running drag onto an object's row in the Object Manager and release there.
+
+    obj: the Object whose row is the drop target; mid_shot: optional screenshot name taken mid-drag.
+    The target is kept in _st["target"] for drag_report.
+    """
     x, y = _st["xy"]
     r = om_region()
     tx, ty = r.x + 70, row_y(row_index(obj))
@@ -116,6 +142,10 @@ def drag_to(obj, mid_shot=None):
 
 
 def drag_report():
+    """Print and return the material slots of the last drop target (_st["target"]).
+
+    No arguments. Returns the list of slot material names (None for an empty slot).
+    """
     ob = bpy.data.objects[_st["target"]]
     mats = [s.material.name if s.material else None for s in ob.material_slots]
     print("B4D DRAG", _st["mat"], "->", ob.name, "slots", mats, "drop prop", repr(bpy.context.window_manager.b4d_mat_drop), flush=True)

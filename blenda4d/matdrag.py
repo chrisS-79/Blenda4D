@@ -173,9 +173,21 @@ class BLENDA4D_OT_mm_drag(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
+        """The drag starts only while the mouse is in the Material Manager.
+
+        cls: the operator class; context: the UI context whose area must have role "MATERIALS".
+        Returns True when the drag may run.
+        """
         return roles.role(context.area) == "MATERIALS"
 
     def invoke(self, context, event):
+        """Start the drag from the material under the press.
+
+        context: the UI context; event: the CLICK_DRAG event. CLICK_DRAG invokes on the first move, so the material
+        is looked up at the press position (event.mouse_prev_press_x/y), not at the current mouse position.
+        Returns {"PASS_THROUGH"} when no material is under the press (the press falls through to a click),
+        otherwise {"RUNNING_MODAL"} with the modal handler added and the hand cursor set.
+        """
         # CLICK_DRAG invokes on the first move, so the press position is where the material is looked up
         region = _role_under(context, "MATERIALS", event.mouse_prev_press_x, event.mouse_prev_press_y)
         mat = None
@@ -190,12 +202,23 @@ class BLENDA4D_OT_mm_drag(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
     def _end(self, context):
+        """Finish the drag: clear the drop highlight, restore the cursor, redraw every area.
+
+        context: the UI context; its window manager holds the drop-target property and its screen the areas.
+        """
         context.window_manager.b4d_mat_drop = ""
         context.window.cursor_modal_restore()
         for a in context.window.screen.areas:
             a.tag_redraw()
 
     def modal(self, context, event):
+        """Follow the mouse while dragging.
+
+        context: the UI context; event: the current event. On mouse moves the Object Manager row under the mouse
+        is stored in wm.b4d_mat_drop (so the draw handler highlights it). On release the material is assigned to
+        that row's object, or to the object under the mouse in a 3D view. ESC, right-click and a fresh press cancel.
+        Returns {"RUNNING_MODAL"} while the drag continues, {"FINISHED"} after a drop, {"CANCELLED"} otherwise.
+        """
         wm = context.window_manager
         if event.type in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}:
             t = _target(context, event)
@@ -223,7 +246,11 @@ _draw = []
 
 
 def _draw_drop():
-    """Highlight in the Object Manager the row a dragged material would land on, like its own row highlights."""
+    """Draw handler: highlight in the Object Manager the row a dragged material would land on.
+
+    Takes no arguments (a draw handler); reads bpy.context. Draws nothing unless wm.b4d_mat_drop names a visible
+    row, like the Object Manager's own row highlights in managers._draw_rows.
+    """
     context = bpy.context
     if roles.role(context.area) != "OBJECTS":
         return
@@ -256,6 +283,8 @@ classes = (BLENDA4D_OT_mm_drag,)
 
 
 def register():
+    """Register the module: the operator class, the drop-target property, the highlight draw handler and the
+    CLICK_DRAG keymap item (called by kinds.register when Blenda mode goes on). Takes no arguments."""
     for c in classes:
         bpy.utils.register_class(c)
     bpy.types.WindowManager.b4d_mat_drop = bpy.props.StringProperty(
@@ -268,6 +297,8 @@ def register():
 
 
 def unregister():
+    """Take everything register() added back out: the keymap item, the draw handler, the property and the class
+    (called by kinds.unregister when Blenda mode goes off, so the switch restores everything). No arguments."""
     kc = bpy.context.window_manager.keyconfigs.addon
     if kc is not None:                           # looked up fresh: held keymap items can be freed at quit
         for name, idname in _keys:
