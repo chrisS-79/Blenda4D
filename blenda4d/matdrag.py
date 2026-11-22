@@ -21,14 +21,24 @@ LIST_TOP = 4.9          # units from the panel's top to the first material row i
 
 
 def _row_h(context):
-    """Height of one material row in the list and layer views: its preview plus the row padding."""
+    """Height of one material row in the list and layer views, in pixels: its preview plus the row padding.
+
+    context: the UI context; reads the UI scale, pixel size and the preview-size setting from it.
+    Returns the row height in pixels.
+    """
     ui = context.preferences.system.ui_scale
     s = max(1.0, min(context.window_manager.b4d_mm_px, 80) / 20)
     return s * 20 * ui + 2 * context.preferences.system.pixel_size
 
 
 def mat_at(context, x, y, region=None):
-    """The material under a region point (x, y) in the Material Manager, or None on empty space or the head."""
+    """The material under a point in the Material Manager.
+
+    context: the UI context; the current view (icons, list, layers), preview size and search filter decide the layout.
+    x, y: the point in region coordinates (as event.mouse_region_x, event.mouse_region_y).
+    region: the Material Manager's window region to map the point through; defaults to context.region.
+    Returns the Material under the point, or None on empty space, the head, or outside the list.
+    """
     wm = context.window_manager
     region = region or context.region
     if region is None or region.type != "WINDOW":
@@ -56,7 +66,12 @@ def mat_at(context, x, y, region=None):
 
 
 def assign(ob, mat):
-    """Put mat in ob's first material slot (a new slot when the object has none). False when it takes no material."""
+    """Give an object a material: mat goes into its first slot, or a new slot is made when it has none.
+
+    ob: the Object to receive the material (None is allowed and refused).
+    mat: the Material to assign (None is allowed and refused).
+    Returns True when the material was put on the object, False when the object takes no material.
+    """
     if ob is None or mat is None or not hasattr(getattr(ob, "data", None), "materials"):
         return False
     if ob.data.materials:
@@ -67,7 +82,13 @@ def assign(ob, mat):
 
 
 def _role_under(context, role, x, y):
-    """The window region of the given role's area under a window position, or None."""
+    """The window region of a role area (e.g. "MATERIALS") under a window position.
+
+    context: the UI context; its window's screen holds the areas to search.
+    role: the role the area must have (roles.role(area) == role).
+    x, y: the window position (as event.mouse_x, event.mouse_y).
+    Returns the area's WINDOW region under the point, or None.
+    """
     for area in context.window.screen.areas:
         if roles.role(area) != role:
             continue
@@ -78,7 +99,12 @@ def _role_under(context, role, x, y):
 
 
 def _om_under(context, x, y):
-    """The Object Manager's area and its window region under a window position, or (None, None)."""
+    """The Object Manager's area and window region under a window position.
+
+    context: the UI context; its window's screen holds the areas to search (None window gives (None, None)).
+    x, y: the window position (as event.mouse_x, event.mouse_y).
+    Returns (area, region) of the Object Manager under the point, or (None, None).
+    """
     if context.window is None:
         return None, None
     for area in context.window.screen.areas:
@@ -91,7 +117,12 @@ def _om_under(context, x, y):
 
 
 def _target(context, event):
-    """The name of the object whose Object Manager row is under the mouse, "" when over none."""
+    """The object whose Object Manager row is under the mouse.
+
+    context: the UI context; the Object Manager search filter decides which rows exist.
+    event: the mouse event; its window position (mouse_x, mouse_y) is mapped to a row.
+    Returns the row object's name, or "" when the mouse is over no row.
+    """
     _area, region = _om_under(context, event.mouse_x, event.mouse_y)
     if region is None:
         return ""
@@ -101,7 +132,12 @@ def _target(context, event):
 
 
 def _view_under(context, x, y):
-    """A 3D view's area and its window region under a window position, or (None, None)."""
+    """A 3D view's area and window region under a window position.
+
+    context: the UI context; its window's screen holds the areas to search (None window gives (None, None)).
+    x, y: the window position (as event.mouse_x, event.mouse_y).
+    Returns (area, region) of a 3D view under the point, or (None, None).
+    """
     if context.window is None:
         return None, None
     for area in context.window.screen.areas:
@@ -114,7 +150,12 @@ def _view_under(context, x, y):
 
 
 def _view_target(context, event):
-    """The object under the mouse in a 3D view (a surface hit, like the Asset Browser's drop), or None."""
+    """The object under the mouse in a 3D view: a ray-cast surface hit, like the Asset Browser's drop.
+
+    context: the UI context; its scene and evaluated depsgraph are used for the ray cast.
+    event: the mouse event; its window position (mouse_x, mouse_y) picks the ray.
+    Returns the Object hit (the original, not an instance), or None on empty space or outside a 3D view.
+    """
     from . import assets
     _area, region = _view_under(context, event.mouse_x, event.mouse_y)
     if region is None:
