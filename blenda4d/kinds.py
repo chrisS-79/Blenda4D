@@ -14,7 +14,7 @@ A module (lights.py, deformers.py, ...) calls these from its register():
 Modules listed in FEATURES are imported and registered by the switch when Blenda mode goes on."""
 import bpy
 
-FEATURES = ("render_settings", "assets", "splines", "generators", "deformers", "lights", "sky", "keymap", "quadview", "topbar", "addons_ui", "material_tag", "matpage", "cameras", "texts", "updates", "phong", "node_arrange", "solo", "matdrag")
+FEATURES = ("render_settings", "render_memory", "viewer", "assets", "splines", "generators", "deformers", "lights", "sky", "views", "keymap", "quadview", "topbar", "addons_ui", "material_tag", "matpage", "matdrag", "cameras", "camview", "texts", "updates", "phong", "node_arrange", "solo", "viewhistory", "timeline", "timeline_pages", "timeline_edit", "modeltools", "magnify", "renderregion", "nodetabs", "sculpttools", "uvtab", "collapse", "om_menu", "tag_pages", "view_menu", "keepsize")
 
 KINDS = {}
 PANELS = {}

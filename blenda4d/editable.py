@@ -18,6 +18,9 @@ def _apply(context, ob, mod):
 
 def make_editable(context, ob):
     """True when the object changed."""
+    from . import collapse
+    if collapse.is_generator(ob):                          # a generator: its result takes its place
+        return collapse.make_editable(context, ob)
     kind = ob.get("b4d_type")
     if ob.type == "MESH" and kind in primitives.TYPE_TO_KIND:
         if ob.data.users > 1:
@@ -43,7 +46,8 @@ def make_editable(context, ob):
 class BLENDA4D_OT_make_editable(bpy.types.Operator):
     bl_idname = "blenda4d.make_editable"
     bl_label = "Make Editable"
-    bl_description = "Turn the selected primitives into polygon objects whose points can be edited (their settings go)"
+    bl_description = ("Turn the selected primitives into polygon objects whose points can be edited (their settings go). "
+                      "A generator becomes what it makes, in its place")
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -51,8 +55,13 @@ class BLENDA4D_OT_make_editable(bpy.types.Operator):
         return context.mode == "OBJECT" and bool(context.selected_objects or context.active_object)
 
     def execute(self, context):
-        obs = list(context.selected_objects) or [context.active_object]
-        done = sum(make_editable(context, ob) for ob in obs if ob is not None)
+        from . import collapse
+        obs = collapse.tops(list(context.selected_objects)) or [context.active_object]
+        done = 0
+        for name in [o.name for o in obs if o is not None]:   # one may take another's place: look each up again
+            ob = bpy.data.objects.get(name)
+            if ob is not None:
+                done += make_editable(context, ob)
         if not done:
             self.report({"INFO"}, "Nothing to make editable")
             return {"CANCELLED"}

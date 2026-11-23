@@ -43,7 +43,9 @@ def _enter_workspace(window):
         return
     prev = ws.name if ws else ""
     own = bpy.data.workspaces.get(WORKSPACE)
+    start = None
     if own is None:
+        start = layouts.startup_spec()
         before = set(bpy.data.workspaces)
         with bpy.context.temp_override(window=window, screen=window.screen):
             bpy.ops.workspace.duplicate()
@@ -51,14 +53,19 @@ def _enter_workspace(window):
         if own is None:
             return
         own.name = WORKSPACE
+        for s in own.screens:                              # shown on the next redraw: no Blender chrome on it
+            build.hush(s)
+        build.curtain(True)                                # and plain until its layout is built
     own[PREV_KEY] = prev
+    if start is not None:
+        layouts.set_current(own, start["base"])
     window.workspace = own
 
     def when_shown(tries=[80]):
         tries[0] -= 1
         if window.screen.as_pointer() not in {s.as_pointer() for s in own.screens}:
             return 0.05 if tries[0] > 0 else None
-        build.rebuild(window, done=lambda: _finish(window))
+        build.rebuild(window, done=lambda: _finish(window), spec=start)
         return None
     bpy.app.timers.register(when_shown, first_interval=0.05)
 
@@ -192,6 +199,7 @@ def _blender_header_button(self, context):
 
 
 def register():
+    build.curtain_on()
     bpy.utils.register_class(BLENDA4D_OT_switch)
     bpy.types.TOPBAR_HT_upper_bar.append(_blender_header_button)
 
@@ -201,3 +209,4 @@ def unregister():
         set_mode(False, forget=True)
     bpy.types.TOPBAR_HT_upper_bar.remove(_blender_header_button)
     bpy.utils.unregister_class(BLENDA4D_OT_switch)
+    build.curtain_off()

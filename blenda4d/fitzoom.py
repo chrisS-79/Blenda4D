@@ -9,7 +9,7 @@ from . import roles
 #          role: (height it is built at, its normal zoom, the smallest share of that). The command bar's icons end up
 #          no smaller than Blender's own toolbar icons, at the least height Blender gives an area.
 STRIPS = {"PALETTE": (62, 1.726, 0.42), "DOC_TABS": (30, 1.0, 0.8), "OM_BAR": (30, 1.0, 0.8), "MM_BAR": (30, 1.0, 0.8),
-          "AB_BAR": (30, 1.0, 0.8)}
+          "AB_BAR": (30, 1.0, 0.8), "TIMELINE": (97, 1.0, 0.6), "TL_BAR": (64, 1.0, 0.75), "VIEW_TABS": (30, 1.0, 0.8), "PV_TOP": (60, 1.0, 0.75)}
 _tried = {}                  # area -> (height, zoom asked for): asked once, whatever Blender makes of it
 _pending = set()
 _handles = []

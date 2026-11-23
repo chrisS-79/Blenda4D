@@ -48,7 +48,7 @@ class BLENDA4D_OT_set_mode(bpy.types.Operator):
         if ob is None or ob.type not in ("MESH", "CURVE"):
             self.report({"INFO"}, "Select a mesh or spline first")
             return {"CANCELLED"}
-        if context.mode == "OBJECT":
+        if ob.mode != "EDIT":                              # from whole objects, or from sculpting
             bpy.ops.object.mode_set(mode="EDIT")
         if ob.type == "MESH":
             bpy.ops.mesh.select_mode(type={"POINTS": "VERT", "EDGES": "EDGE", "POLYGONS": "FACE"}[self.mode])
@@ -252,14 +252,9 @@ def topbar_left(self, context):
 
 
 def topbar_right(self, context):
-    from . import layouts
     layout = self.layout
     from . import updates
     updates.draw(layout)                                 # "Update to x.y.z" when the update list has a newer one
-    row = layout.row(align=True)
-    row.label(text="Layout:")
-    row.menu(layouts.BLENDA4D_MT_layouts.bl_idname, text=layouts.current_name())
-    layout.separator(factor=1.0)
     sw = layout.row(align=True)
     sw.operator("blenda4d.switch", text="Blenda 4D", depress=True).on = True
     sw.operator("blenda4d.switch", text="Blender").on = False
@@ -283,49 +278,38 @@ def view_header(self, context):
     row.operator("blenda4d.quad_view", text="", icon="FULLSCREEN_EXIT" if sum(a.type == "VIEW_3D" for a in context.screen.areas) > 1 else "FULLSCREEN_ENTER", emboss=False)
 
 
+def view_row(self, context):
+    """The viewport's first row: the tabs. Four views have one row of tabs above them all, and each its menu bar here."""
+    if roles.areas(context.screen, "VIEW_TABS"):
+        return view_header(self, context)
+    return view_tabs(self, context)
+
+
 def view_tabs(self, context):
     """The viewport's tab row: View | Render Settings | Render Viewer."""
     layout = self.layout
     row = layout.row(align=True)
     row.alignment = "LEFT"
     docked = bool(roles.areas(context.screen, "RENDER"))
-    row.operator("blenda4d.view_tab", text="View", depress=not docked)
+    viewer = bool(roles.areas(context.screen, "PV_TOP"))
+    row.operator("blenda4d.view_tab", text="View", depress=not docked and not viewer)
     row.operator("blenda4d.render_settings", text="Render Settings", depress=docked)
-    row.operator("render.view_show", text="Render Viewer")
-
-
-def timeline_header(self, context):
-    if context.area is None or context.area.ui_type != "TIMELINE":
-        return _saved["DOPESHEET_HT_header"](self, context)
-    scene = context.scene
-    layout = self.layout
-    row = layout.row(align=True)
-    row.prop(scene, "frame_start", text="")
-    layout.separator_spacer()
-    row = layout.row(align=True)
-    row.operator("screen.frame_jump", text="", icon="REW").end = False
-    row.operator("screen.keyframe_jump", text="", icon="PREV_KEYFRAME").next = False
-    row.operator("screen.animation_play", text="", icon="PLAY_REVERSE").reverse = True
-    row.operator("screen.animation_play", text="", icon="PLAY")
-    row.operator("screen.keyframe_jump", text="", icon="NEXT_KEYFRAME").next = True
-    row.operator("screen.frame_jump", text="", icon="FF").end = True
-    layout.prop(scene, "frame_current", text="")
-    layout.prop(scene.tool_settings, "use_keyframe_insert_auto", text="", icon="REC")
-    layout.separator_spacer()
-    layout.prop(scene, "frame_end", text="")
+    row.operator("blenda4d.render_viewer", text="Render Viewer", depress=viewer)
 
 
 def properties_header(self, context):
     """Render Settings shown in the viewport's place keeps the viewport's tab row in its header."""
     if roles.role(context.area) == "RENDER":
+        if roles.areas(context.screen, "VIEW_TABS"):      # four views: their one row of tabs is above all of them
+            self.layout.operator("blenda4d.title", text="Render Settings", depress=True).what = "Render Settings"
+            return None
         return view_tabs(self, context)
     return _saved["PROPERTIES_HT_header"](self, context)
 
 
 _saved = {}
 OVERRIDES = (("PROPERTIES_HT_header", "draw", properties_header), ("TOPBAR_HT_upper_bar", "draw_left", topbar_left), ("TOPBAR_HT_upper_bar", "draw_right", topbar_right),
-             ("VIEW3D_HT_header", "draw", view_tabs), ("VIEW3D_HT_tool_header", "draw", view_header),
-             ("DOPESHEET_HT_header", "draw", timeline_header))
+             ("VIEW3D_HT_header", "draw", view_row), ("VIEW3D_HT_tool_header", "draw", view_header))
 
 
 def override():
@@ -362,7 +346,9 @@ class BLENDA4D_PT_doc_tabs(roles.RolePanel, bpy.types.Panel):
     role = "DOC_TABS"
 
     def draw(self, context):
-        row = self.layout.row(align=True)
+        from . import fitzoom, layouts
+        whole = self.layout.row(align=False)
+        row = whole.row(align=True)
         row.alignment = "LEFT"
         name = bpy.path.basename(bpy.data.filepath) or "Untitled"
         b = row.row(align=True)
@@ -370,6 +356,9 @@ class BLENDA4D_PT_doc_tabs(roles.RolePanel, bpy.types.Panel):
         b.operator("blenda4d.title", text=name, depress=True).what = (
             f"The open file: {bpy.data.filepath}" if bpy.data.filepath else "This scene has not been saved yet")
         row.operator("wm.read_homefile", text="", icon="ADD", emboss=False)
+        s = context.preferences.system.ui_scale
+        free = context.region.width / max(0.1, fitzoom.zoom_of(context.region)) / s - 2 * PANEL_MARGIN
+        layouts.draw_tabs(whole, context, free / 20.0 - 18.0)      # 18: the file tab, the + and the space after them
 
 
 PALETTE_GAP = 1.3            # between the command bar groups: about a third of a button, as in the private version
@@ -534,27 +523,12 @@ def _column(layout, scale=1.9):
     return col
 
 
-def draw_tools(col, context):
-    """The tools column: zoom, select, move, rotate, scale, then the modelling and spline tools."""
-    col.operator("view3d.zoom_border", text="", icon="VIEWZOOM")
-    tool = active_tool(context)
-    for t in MODES_TOOLS:
-        if t is None:
-            col.separator(factor=1.2)
-            continue
-        name = TOOL_ICONS.get(t, "")
-        iv = icons.tool_shape(name) or tool_icon(name)    # tinted tool shape, else Blender's: all drawn the same size
-        op = col.operator("wm.tool_set_by_id", text="", icon_value=iv, depress=(tool == t))
-        op.name = t                                    # no space type: Blender's lookup finds the viewport's tools
-
-
-
-class BLENDA4D_PT_modes(roles.RolePanel, bpy.types.Panel):
-    bl_label = "Tools"
-    role = "MODES"
+class BLENDA4D_PT_view_tabs(roles.RolePanel, bpy.types.Panel):
+    bl_label = "Views"
+    role = "VIEW_TABS"
 
     def draw(self, context):
-        draw_tools(_column(self.layout), context)
+        view_tabs(self, context)
 
 
 class BLENDA4D_PT_view_tools(bpy.types.Panel):
@@ -749,17 +723,8 @@ def draw_create(col, group_gap=0.8, strip=False):
         o.group = name
 
 
-class BLENDA4D_PT_create(roles.RolePanel, bpy.types.Panel):
-    bl_label = "Create"
-    role = "CREATE"
-
-    def draw(self, context):
-        draw_create(_column(self.layout, CREATE_SCALE))
-
-
-
 classes = (BLENDA4D_OT_set_mode, BLENDA4D_OT_shading, BLENDA4D_OT_overlay, BLENDA4D_OT_axis_lock, BLENDA4D_OT_toggle_column,
-           BLENDA4D_OT_create, *GROUP_MENUS, BLENDA4D_PT_doc_tabs, BLENDA4D_PT_palette, BLENDA4D_PT_palette_more, BLENDA4D_OT_palette_more, BLENDA4D_PT_modes, BLENDA4D_PT_create)
+           BLENDA4D_OT_create, *GROUP_MENUS, BLENDA4D_PT_doc_tabs, BLENDA4D_PT_view_tabs, BLENDA4D_PT_palette, BLENDA4D_PT_palette_more, BLENDA4D_OT_palette_more)
 
 
 def register():

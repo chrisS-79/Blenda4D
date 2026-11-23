@@ -52,16 +52,31 @@ def _index_file(repo):
     return os.path.join(repo.directory, ".blender_ext", "index.json")
 
 
+def _platform():
+    """This computer as the update list names it: windows-x64, macos-arm64, linux-x64..."""
+    import platform
+    import sys
+    system = {"win32": "windows", "darwin": "macos"}.get(sys.platform, "linux")
+    machine = platform.machine().lower()
+    return f"{system}-{'arm64' if machine in ('arm64', 'aarch64') else 'x64'}"
+
+
 def _read_latest(repo):
+    """The newest version on the update list made for this computer."""
     try:
         with open(_index_file(repo)) as f:
             data = json.load(f)
     except (OSError, ValueError):
         return None
+    here, best = _platform(), None
     for pkg in data.get("data", []):
-        if pkg.get("id") == _pkg_id():
-            return pkg.get("version")
-    return None
+        if pkg.get("id") != _pkg_id():
+            continue
+        if pkg.get("platforms") and here not in pkg["platforms"]:
+            continue                                   # a version for other computers
+        if best is None or _version(pkg.get("version", "0")) > _version(best):
+            best = pkg.get("version")
+    return best
 
 
 def available():

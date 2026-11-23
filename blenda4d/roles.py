@@ -20,12 +20,31 @@ ROLE_FLAGS = {
     "ASSETS": "show_properties_data",
     "DOC_TABS": "show_properties_bone_constraints",
     "TIMELINE": "show_properties_material",
-    "VIEW_TABS": "show_properties_collection",
+    "TL_BAR": "show_properties_collection",
+    "TL_EDIT": "show_properties_object",
+    "VIEW_TABS": "show_properties_strip",
+    "ND_LIST": "show_properties_strip_modifier",
     "MM_BAR": "show_properties_scene",
     "OM_BAR": "show_properties_output",
     "OM_HEAD": "show_properties_view_layer",
     "AB_BAR": "show_properties_bone",
+    # all the single tab flags are taken: these have two
+    "PV_TOP": ("show_properties_output", "show_properties_scene"),
+    "PV_SIDE": ("show_properties_output", "show_properties_bone"),
+    "PV_BOTTOM": ("show_properties_scene", "show_properties_bone"),
+    "UV_BAR": ("show_properties_output", "show_properties_view_layer"),
 }
+_by_flags = {}
+
+
+def _named(space):
+    """The role whose flags, and no others of Blenda's, are on."""
+    if _by_flags.get("count") != len(ROLE_FLAGS):
+        _by_flags.clear()
+        _by_flags["all"] = sorted({f for v in ROLE_FLAGS.values() for f in (v if isinstance(v, tuple) else (v,))})
+        _by_flags["names"] = {frozenset(v if isinstance(v, tuple) else (v,)): n for n, v in ROLE_FLAGS.items()}
+        _by_flags["count"] = len(ROLE_FLAGS)
+    return _by_flags["names"].get(frozenset(f for f in _by_flags["all"] if getattr(space, f, False)))
 
 
 def _flags(space):
@@ -42,11 +61,9 @@ def role(area):
         return None
     if space.show_region_header:               # only Render Settings, shown in the viewport's place, keeps its header:
         if getattr(space, "show_properties_render", False) and "RENDER" in ROLE_FLAGS:   # the viewport's tab row
-            on = [name for name, flag in ROLE_FLAGS.items() if getattr(space, flag, False)]
-            return "RENDER" if on == ["RENDER"] else None
+            return "RENDER" if _named(space) == "RENDER" else None
         return None
-    on = [name for name, flag in ROLE_FLAGS.items() if getattr(space, flag, False)]
-    return on[0] if len(on) == 1 else None
+    return _named(space)
 
 
 def role_of(context):
@@ -59,8 +76,10 @@ def set_role(area, name):
         space.context = "TOOL"
     except TypeError:
         pass
+    mine = ROLE_FLAGS.get(name)
+    mine = mine if isinstance(mine, tuple) else (mine,)
     for flag in _flags(space):
-        setattr(space, flag, flag == "show_properties_tool" or flag == ROLE_FLAGS.get(name))
+        setattr(space, flag, flag == "show_properties_tool" or flag in mine)
     space.show_region_header = False
     return space.context == "TOOL"
 
@@ -69,11 +88,26 @@ def areas(screen, name):
     return [a for a in screen.areas if role(a) == name]
 
 
+def alive(area):
+    """Is this area still on a screen that a window shows? Blender frees an area when it is closed or joined, and
+    reading a freed one crashes (it did on Windows); a job that runs later checks first."""
+    try:
+        ptr = area.as_pointer()
+        wm = bpy.context.window_manager
+    except (ReferenceError, AttributeError):
+        return False
+    return wm is not None and any(a.as_pointer() == ptr for w in wm.windows for a in w.screen.areas)
+
+
 def hide_nav(area, window=None):
     """A Properties editor's tab column can only be toggled with the operator."""
+    if window is None:
+        window = next((w for w in bpy.context.window_manager.windows if w.screen == area.id_data), None)
+        if window is None:                                 # no window shows it: Blender cannot lay a region out
+            return False
     for region in area.regions:
         if region.type == "NAVIGATION_BAR" and region.width > 1:
-            kw = {"window": window} if window is not None else {}
+            kw = {"window": window}
             with bpy.context.temp_override(area=area, region=region, **kw):
                 bpy.ops.screen.region_toggle(region_type="NAVIGATION_BAR")
             return True
@@ -137,6 +171,8 @@ def _nav_watch():
 
     def hide():
         _nav_pending.discard(key)
+        if not alive(area):
+            return None
         try:
             hide_nav(area, window)
         except (ReferenceError, RuntimeError):

@@ -152,10 +152,48 @@ def _section(layout, key, title, mat=None, switch=None, closed=True):
     if switch:
         head.prop(mat, "b4d_ch_" + key.lower(), text="")
     head.label(text=title)
+    node = _principled(mat) if switch else None
+    sock = node.inputs.get(switch[0]) if node is not None else None
+    if sock is not None and not sock.is_linked:
+        dot = head.row()
+        dot.alignment = "RIGHT"
+        dot.prop_decorator(sock, "default_value")             # the switch's own value: keyframe it on and off
     if body is not None:
         body.use_property_split = True
-        body.use_property_decorate = False
+        body.use_property_decorate = True
     return body
+
+
+# --- one node's settings (the Node Editor's right panel) -----------------------------------------------------------
+IMAGES = {"TEX_IMAGE", "TEX_ENVIRONMENT"}                     # Blender's longer settings: the image and its sequence
+
+
+def draw_node(layout, context, node):
+    """A node's settings and inputs, every one with its keyframe dot."""
+    col = layout.column()
+    col.use_property_split = True
+    col.use_property_decorate = True
+    if node.type in IMAGES:
+        node.draw_buttons_ext(context, col.column())
+        col.separator()
+    col.template_node_inputs(node)                            # Blender's own: the node's settings, then its inputs
+    if getattr(node, "color_ramp", None) is not None:
+        draw_knots(layout, node.color_ramp)
+
+
+def draw_knots(layout, ramp):
+    """Every knot of a gradient, to keyframe its place and its color."""
+    head, body = layout.panel("b4d_node_knots", default_closed=False)
+    head.label(text="Gradient Knots")
+    if body is None:
+        return
+    body.use_property_split = True
+    body.use_property_decorate = True
+    for i, e in enumerate(ramp.elements):
+        col = body.column(align=True)
+        col.prop(e, "position", text=f"Knot {i + 1} Position", slider=True)
+        col.prop(e, "color", text="Color")
+        body.separator(factor=0.4)
 
 
 def draw_subject(layout, context, _ob=None):
@@ -177,12 +215,14 @@ def draw_material(layout, context, mat, head=True):
         layout.template_preview(mat, show_buttons=False)      # the live ball: re-renders as values change
     col = layout.column()
     col.use_property_split = True
-    col.use_property_decorate = False
-    col.prop(mat, "name", text="Name")
+    col.use_property_decorate = True
+    top = col.column()
+    top.use_property_decorate = False                         # a name and a shader type are not values over time
+    top.prop(mat, "name", text="Name")
     if not mat.use_nodes:
         col.operator("blenda4d.mat_use_nodes", text="Use Nodes", icon="NODETREE").name = mat.name
         return True
-    col.prop(mat, "b4d_shader", text="Shader")
+    top.prop(mat, "b4d_shader", text="Shader")
     node = _principled(mat)
     if node is not None:
         for key, title, sw, sockets in CHANNELS:

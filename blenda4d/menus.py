@@ -19,6 +19,53 @@ def sub(label, idname, icon="NONE"):
     return ("menu", label, idname, icon)
 
 
+MENU_ICON_SCALE = 0.7      # Blender draws a tool shape larger than a menu row; its menu copy is drawn this much smaller
+_menu_icons = {}
+
+
+def _shape_file(name, model_tool):
+    """(path of the tool shape's triangles, whether Blender's accents need Blenda's colours) or (None, False)."""
+    import os
+    from . import icons as _icons, modeltools
+    try:
+        own = next((f for f in os.listdir(_icons.DIR) if f.endswith(".dat") and f.split("__")[0] == name), None)
+    except OSError:
+        own = None
+    if own:
+        return os.path.join(_icons.DIR, own), False
+    return modeltools.blender_icon_file(name), model_tool
+
+
+def menu_icon(name, model_tool=False):
+    """icon_value of a tool shape redrawn at a menu row's size: the same triangles, scaled toward the left middle of
+    the square Blender draws them in, so they line up with the menu's other icons and leave the label alone. 0 when
+    the shape can't be read."""
+    key = (name, model_tool)
+    if key not in _menu_icons:
+        iv = 0
+        path, recol = _shape_file(name, model_tool)
+        try:
+            with open(path, "rb") as f:
+                b = f.read()
+            if b[:3] == b"VCO":
+                w, h = b[4] or 256, b[5] or 256
+                n = (len(b) - 8) // 18
+                co = bytearray(b[8:8 + n * 6])
+                k = MENU_ICON_SCALE
+                for i in range(0, len(co), 2):
+                    co[i] = min(255, round(co[i] * k))
+                    co[i + 1] = min(255, round(co[i + 1] * k + h * (1 - k) / 2))
+                cols = b[8 + n * 6:8 + n * 18]
+                if recol:
+                    from . import modeltools
+                    cols = modeltools.recolour(cols)
+                iv = bpy.app.icons.new_triangles((w, h), bytes(co), cols)
+        except (OSError, TypeError, ValueError):
+            iv = 0
+        _menu_icons[key] = iv
+    return _menu_icons[key]
+
+
 def draw_items(layout, items):
     for it in items:
         if it == SEP:
@@ -41,7 +88,12 @@ def draw_items(layout, items):
             continue
         if isinstance(icon, str) and icon.startswith("ops."):     # one of Blender's tool icons, as in the tool column
             from . import bars, icons as _icons
-            iv = _icons.tool_shape(icon) or bars.tool_icon(icon)
+            from . import modeltools
+            iv = menu_icon(icon, op == "blenda4d.model_tool")
+            if not iv:
+                iv = _icons.tool_shape(icon) or (modeltools.tool_icon(icon) if op == "blenda4d.model_tool" else 0) or bars.tool_icon(icon)
+            if iv and op == "wm.tool_set_by_id":          # Blender widens a tool switch's icon slot: go through our own
+                op = "blenda4d.menu_tool"                    # operator so the row lines up with the menu's others
             o = layout.operator(op, text=label, icon_value=iv) if iv else layout.operator(op, text=label)
         else:
             o = layout.operator(op, text=label, icon=icon)
@@ -75,6 +127,11 @@ class BLENDA4D_OT_noop(bpy.types.Operator):
 
     def execute(self, context):
         return {"CANCELLED"}
+
+
+def _m(label, which, icon):
+    """A modeling tool or command (modeltools.py)."""
+    return item(label, "blenda4d.model_tool", icon, which=which)
 
 
 MAIN = {
@@ -112,10 +169,13 @@ MAIN = {
                item("Rectangle Selection", "wm.tool_set_by_id", "ops.generic.select_box", name="builtin.select_box"),
                item("Lasso Selection", "wm.tool_set_by_id", "ops.generic.select_lasso", name="builtin.select_lasso"), SEP,
                item("Phong Break Selection", "blenda4d.phong_break_selection")],
-    "Tools": [item("Move", "wm.tool_set_by_id", name="builtin.move"), item("Scale", "wm.tool_set_by_id", name="builtin.scale"),
-              item("Rotate", "wm.tool_set_by_id", name="builtin.rotate"), SEP, item("Measure", "wm.tool_set_by_id", name="builtin.measure")],
-    "Spline": [item("Pen", "wm.tool_set_by_id", name="builtin.pen"), item("Sketch", "wm.tool_set_by_id", name="builtin.draw")],
-    "Mesh": [item("Make Editable", "blenda4d.make_editable", "MESH_DATA"), SEP,
+    "Tools": [item("Move", "wm.tool_set_by_id", "ops.transform.translate", name="builtin.move"),
+              item("Scale", "wm.tool_set_by_id", "ops.transform.resize", name="builtin.scale"),
+              item("Rotate", "wm.tool_set_by_id", "ops.transform.rotate", name="builtin.rotate"), SEP,
+              item("Measure", "wm.tool_set_by_id", "ops.view3d.ruler", name="builtin.measure")],
+    "Spline": [item("Pen", "wm.tool_set_by_id", "ops.curve.pen", name="builtin.pen"),
+               item("Sketch", "wm.tool_set_by_id", "ops.curve.draw", name="builtin.draw")],
+    "Mesh": [item("Make Editable", "blenda4d.make_editable", "MESH_DATA"), item("Current State to Object", "blenda4d.current_state", "FREEZE"), SEP,
              item("Extrude", "wm.tool_set_by_id", "ops.mesh.extrude_region_move", name="builtin.extrude_region"),
              item("Inset", "wm.tool_set_by_id", "ops.mesh.inset", name="builtin.inset_faces"),
              item("Bevel", "wm.tool_set_by_id", "ops.mesh.bevel", name="builtin.bevel"),
@@ -124,16 +184,29 @@ MAIN = {
              item("Polygon Pen", "wm.tool_set_by_id", "ops.mesh.polybuild_hover", name="builtin.poly_build"),
              item("Bridge", "mesh.bridge_edge_loops", "LINKED"),
              item("Move Along Normal", "blenda4d.move_along_normal", "ops.transform.shrink_fatten"), SEP,
-             item("Edge to Spline", "blenda4d.edge_to_spline", "CURVE_DATA")],
+             item("Edge to Spline", "blenda4d.edge_to_spline", "CURVE_DATA"), SEP,
+             _m("Plane Cut", "builtin.bisect", "ops.mesh.bisect"), _m("Offset Edge Loop Cut", "builtin.offset_edge_loop_cut", "ops.mesh.offset_edge_loops_slide"),
+             _m("Spin", "builtin.spin", "ops.mesh.spin"), _m("Smooth", "builtin.smooth", "ops.mesh.vertices_smooth"),
+             _m("Edge Slide", "builtin.edge_slide", "ops.transform.edge_slide"), _m("Vertex Slide", "builtin.vertex_slide", "ops.transform.vert_slide"),
+             _m("Shear", "builtin.shear", "ops.transform.shear"), _m("To Sphere", "builtin.to_sphere", "ops.transform.tosphere"),
+             _m("Rip", "builtin.rip_region", "ops.mesh.rip"), SEP,
+             _m("Close Polygon Hole", "mesh.edge_face_add", "SNAP_FACE"), _m("Weld", "mesh.merge:CENTER", "AUTOMERGE_ON"),
+             _m("Optimize", "mesh.remove_doubles", "AUTOMERGE_OFF"), _m("Subdivide", "mesh.subdivide", "MOD_SUBSURF"),
+             _m("Triangulate", "mesh.quads_convert_to_tris", "MOD_TRIANGULATE"), _m("Untriangulate", "mesh.tris_convert_to_quads", "MESH_GRID")],
     "Volume": [item("Volume Builder"), item("Volume Mesher")],
     "MoClone": [item("Cloner"), item("Matrix"), item("Fracture"), item("Voronoi Fracture"), SEP, item("Effectors"), item("Fields")],
     "Character": [item("Joint", "object.armature_add", "BONE_DATA")],
-    "Animate": [item("Record Active Objects", "anim.keyframe_insert", "REC"), item("Delete Keyframes", "anim.keyframe_delete_v3d")],
+    "Animate": [item("Record Active Objects", "blenda4d.tl_record", "KEYFRAME_HLT"), item("Autokeying", "blenda4d.tl_autokey", "REC"),
+                item("Delete Keyframes", "anim.keyframe_delete_v3d", "X"), SEP,
+                item("Play Forwards / Stop", "screen.animation_play", "PLAY"), item("Go to Start", "blenda4d.tl_go", "REW", to="START"),
+                item("Go to Previous Key", "blenda4d.tl_go", "PREV_KEYFRAME", to="PREV_KEY"), item("Go to Previous Frame", "blenda4d.tl_go", "FRAME_PREV", to="PREV"),
+                item("Go to Next Frame", "blenda4d.tl_go", "FRAME_NEXT", to="NEXT"), item("Go to Next Key", "blenda4d.tl_go", "NEXT_KEYFRAME", to="NEXT_KEY"),
+                item("Go to End", "blenda4d.tl_go", "FF", to="END")],
     "Simulate": [item("Rigid Body", "rigidbody.object_add"), item("Cloth", "object.modifier_add", type="CLOTH")],
     "Tracker": [item("Motion Tracker")],
     "Render": [item("Render View", "blenda4d.render_still", "RENDER_STILL"), item("Render to Render Viewer", "blenda4d.render", "RENDER_RESULT"),
                item("Render Animation", "blenda4d.render", "RENDER_ANIMATION", animation=True), SEP,
-               item("Render Viewer", "render.view_show", "IMAGE"), item("Render Settings...", "blenda4d.render_settings", "SCENE"), SEP],
+               item("Render Viewer", "blenda4d.render_viewer", "IMAGE"), item("Render Settings...", "blenda4d.render_settings", "SCENE"), SEP],
     "Add-ons": [item("Get Extensions...", "screen.userpref_show", "PLUGIN", section="EXTENSIONS"),
                 item("Add-on Preferences...", "screen.userpref_show", "PREFERENCES", section="ADDONS"),
                 item("Check for Blenda 4D Updates...", "blenda4d.check_updates", "FILE_REFRESH"), SEP,
@@ -143,6 +216,8 @@ MAIN = {
                 item("Blender Properties...", "blenda4d.blender_properties", "PROPERTIES")],
     "Window": [item("Material Manager", "blenda4d.toggle_column", "MATERIAL", name="MATERIALS"),
                item("Asset Browser", "blenda4d.toggle_column", "ASSET_MANAGER", name="ASSETS"), SEP,
+               item("Timeline (Dope Sheet)", "blenda4d.tl_dock", "ACTION", mode="KEYS"), item("Timeline (F-Curves)", "blenda4d.tl_dock", "FCURVE", mode="CURVES"), SEP,
+               sub("Layouts", "BLENDA4D_MT_layouts", "WORKSPACE"), SEP,
                item("New Window", "wm.window_new"), item("Toggle Full Screen", "wm.window_fullscreen_toggle")],
     "Help": [item("Blender Manual", "wm.url_open_preset", "HELP", type="MANUAL"), item("About Blender", "wm.splash_about", "BLENDER")],
 }
@@ -166,6 +241,9 @@ MENU_TIPS = {
            "Tags": "Add tags (material, smoothing) to the selected objects", "Bookmarks": "Saved places in the list"},
     "am": {"Mode": "What the Attribute Manager shows", "Edit": "Copy and paste settings",
            "User Data": "Your own settings added to an object"},
+    "tl": {"Create": "Make keys and markers", "Edit": "Copy, paste, delete and select keys", "Filter": "Which tracks are listed",
+           "View": "Dope Sheet or F-Curves, and the list", "Frame": "Which frames are in view", "Functions": "Tidy tracks and keys",
+           "Key": "How the selected keys are interpolated", "F-Curve": "The selected keys' tangents", "Marker": "Markers on the ruler"},
     "mm": {"Create": "Make new materials", "Edit": "Copy, paste and delete materials", "View": "How materials are listed",
            "Select": "Select materials", "Material": "Commands for the selected material"},
     "ab": {"Create": "Add assets", "Edit": "Edit assets", "View": "How assets are listed", "Libraries": "Asset libraries"},
@@ -182,8 +260,10 @@ def _make(label, items, prefix):
         extra = kinds.menu_items(label)
         if extra:
             self.layout.separator()
+            from . import icons
             for text, kind, icon in extra:
-                self.layout.operator("blenda4d.add_kind", text=text, icon=icon).kind = kind
+                kw = icons.kw(icon, "environment") if icon == "WORLD" else {"icon": icon}     # the Sky's own dome
+                self.layout.operator("blenda4d.add_kind", text=text, **kw).kind = kind
     return type(idname, (bpy.types.Menu,), {"bl_idname": idname, "bl_label": label, "bl_description": tip, "draw": draw})
 
 
@@ -224,16 +304,17 @@ _overflow = {}               # first menu's idname -> the menus its » lists, se
 _more = {}                   # first menu's idname -> that bar's » menu class
 
 
-def make_more(classes):
+def make_more(classes, name=None):
     """The » menu for a bar of these menus (register the class it returns with the bar's menus)."""
     key = classes[0].bl_idname
+    name = name or key.rpartition("_MT_")[2]
 
     def draw(self, context):
         for cls in _overflow.get(key, ()):
             self.layout.menu(cls.bl_idname, text=cls.bl_label)
 
-    cls = type("BLENDA4D_MT_more_" + key.rpartition("_MT_")[2], (bpy.types.Menu,),
-               {"bl_idname": "BLENDA4D_MT_more_" + key.rpartition("_MT_")[2], "bl_label": "More",
+    cls = type("BLENDA4D_MT_more_" + name, (bpy.types.Menu,),
+               {"bl_idname": "BLENDA4D_MT_more_" + name, "bl_label": "More",
                 "bl_description": "The menus that do not fit in the bar", "draw": draw})
     _more[key] = cls
     return cls
@@ -275,7 +356,27 @@ def simple_menu(label, items, manager="mgr"):
     return _make(label, items, manager)
 
 
-classes = (BLENDA4D_OT_title, BLENDA4D_OT_noop, *VIEW_OPS, *MAIN_CLASSES, *VIEW_CLASSES, make_more(MAIN_CLASSES), make_more(VIEW_CLASSES))
+class BLENDA4D_OT_menu_tool(bpy.types.Operator):
+    bl_idname = "blenda4d.menu_tool"
+    bl_label = "Tool"
+    bl_options = {"INTERNAL"}
+    name: bpy.props.StringProperty()
+
+    @classmethod
+    def description(cls, context, props):
+        n = props.name.rpartition(".")[2].replace("_", " ")
+        return f"Use the {n} tool in the viewport"
+
+    def execute(self, context):
+        from . import topbar
+        area, region, _sp = topbar.main_view(context)
+        if area is None:
+            return {"CANCELLED"}
+        with context.temp_override(window=context.window, area=area, region=region):
+            return bpy.ops.wm.tool_set_by_id(name=self.name)
+
+
+classes = (BLENDA4D_OT_title, BLENDA4D_OT_menu_tool, BLENDA4D_OT_noop, *VIEW_OPS, *MAIN_CLASSES, *VIEW_CLASSES, make_more(MAIN_CLASSES), make_more(VIEW_CLASSES))
 
 
 def register():

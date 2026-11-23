@@ -78,12 +78,12 @@ WANT = [
     ("3D View", "view3d.view_selected", "S", {}),
     ("3D View", "view3d.view_selected", "O", {}),
     ("3D View", "view3d.view_all", "H", {}),
-    ("3D View", "view3d.view_persportho", "F1", {}),
-    ("3D View", "view3d.view_axis", "F2", {}),
-    ("3D View", "view3d.view_axis", "F3", {}),
-    ("3D View", "view3d.view_axis", "F4", {}),
-    ("3D View", "object.convert", "C", {}),
-    ("Property Editor", "object.convert", "C", {}),
+    ("3D View", "blenda4d.view_persp", "F1", {}),
+    ("3D View", "blenda4d.view_top", "F2", {}),
+    ("3D View", "blenda4d.view_right", "F3", {}),
+    ("3D View", "blenda4d.view_front", "F4", {}),
+    ("3D View", "blenda4d.make_editable", "C", {}),
+    ("Property Editor", "blenda4d.make_editable", "C", {}),
     ("3D View", "wm.call_menu", "C", {"alt": True}),
     ("Object Mode", "object.delete", "BACK_SPACE", {}),
     ("Object Mode", "object.delete", "DEL", {}),
@@ -109,7 +109,7 @@ for km_name, idname, key, mods in WANT:
     check(top is not None and top.idname == idname, f"   ...and nothing earlier in {km_name} takes it ({top and top.idname})")
 
 check(find(kc, "3D View", "wm.tool_set_by_id", "E").properties.name == "builtin.move", "E = Move tool")
-check(find(kc, "3D View", "view3d.view_axis", "F4").properties.type == "FRONT", "F4 = front view")
+check(find(kc, "3D View", "blenda4d.view_front", "F4") is not None, "F4 = front view")
 # defaults that would answer first in the viewport's mode key maps are gone
 for km_name, key in (("Object Mode", "S"), ("Object Mode", "R"), ("Object Mode", "H"), ("Object Mode", "O"),
                      ("Mesh", "S"), ("Mesh", "R"), ("3D View Generic", "T"), ("Frames", "SPACE")):

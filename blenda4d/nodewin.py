@@ -10,7 +10,7 @@ Opened by double-clicking a material in the Material Manager, or Open Node Edito
 screen carries the material's name (KEY), which is how the header and the panel know they are in this window."""
 import bpy
 
-from . import own_draw
+from . import roles, own_draw
 
 KEY = "b4d_node_window"
 CATEGORY = "Blenda 4D"
@@ -63,6 +63,8 @@ def _previews_on(tree):
 
 
 def _region(area, kind):
+    if not roles.alive(area):                              # freed: reading it would crash
+        return None
     return next((r for r in area.regions if r.type == kind), None)
 
 
@@ -111,6 +113,8 @@ def open_window(context, mat):
 
     def settle(tries=[30]):
         tries[0] -= 1
+        if not roles.alive(ar):
+            return None
         try:
             reg = _region(ar, "WINDOW")
             side = _region(ar, "UI")
@@ -129,6 +133,8 @@ def open_window(context, mat):
     bpy.app.timers.register(settle, first_interval=0.1)
 
     def reframe():                                        # again once the previews above the nodes are drawn
+        if not roles.alive(ar):
+            return None
         try:
             reg = _region(ar, "WINDOW")
             with bpy.context.temp_override(window=new, area=ar, region=reg):
@@ -153,7 +159,8 @@ def _keep_previews():
 def _tick():
     open_ = False
     for w in bpy.context.window_manager.windows:
-        mat = material_of(w.screen)
+        from . import nodetabs
+        mat = material_of(w.screen) or nodetabs.material_of(w.screen)
         if mat is not None and mat.node_tree is not None:
             open_ = True
             _previews_on(mat.node_tree)
@@ -182,6 +189,9 @@ class BLENDA4D_MT_nodewin_edit(bpy.types.Menu):
 def _header(self, context):
     mat = material_of(context.screen)
     if mat is None:
+        from . import nodetabs
+        if nodetabs.docked(context):
+            return nodetabs.node_header(self, context)
         return _own_header[0](self, context)
     lay = self.layout
     row = lay.row(align=True)
@@ -208,11 +218,15 @@ class BLENDA4D_PT_nodewin(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        return material_of(context.screen) is not None
+        from . import nodetabs
+        return material_of(context.screen) is not None or nodetabs.docked(context)
 
     def draw(self, context):
-        mat = material_of(context.screen)
+        from . import nodetabs
+        mat = material_of(context.screen) or nodetabs.material_of(context.screen)
         lay = self.layout
+        if mat is None:
+            return nodetabs.node_panel(lay, context)
         tree = mat.node_tree
         node = tree.nodes.active if tree is not None else None
         if node is not None and (not node.select or node.type in {"OUTPUT_MATERIAL", "FRAME", "REROUTE"}):
@@ -226,13 +240,7 @@ class BLENDA4D_PT_nodewin(bpy.types.Panel):
             return
         lay.separator()
         lay.label(text=node.label or node.name, icon="NODE")
-        if hasattr(node, "draw_buttons_ext"):
-            box = lay.column()
-            node.draw_buttons_ext(context, box)
-        col = lay.column()
-        col.use_property_split = True
-        col.use_property_decorate = False
-        col.template_node_inputs(node)
+        matpage.draw_node(lay, context, node)
 
 
 classes = (BLENDA4D_MT_nodewin_edit, BLENDA4D_PT_nodewin)
@@ -258,7 +266,8 @@ def _node_rect(node, s):
 
 def _draw_frames():
     ctx = bpy.context
-    if material_of(ctx.screen) is None:
+    from . import nodetabs
+    if material_of(ctx.screen) is None and nodetabs.material_of(ctx.screen) is None:
         return
     sp, reg = ctx.space_data, ctx.region
     if sp is None or reg is None or not sp.overlay.show_previews or not sp.overlay.show_overlays:

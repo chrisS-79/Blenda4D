@@ -26,7 +26,18 @@ KEYS = [
     # --- viewport navigation: hold Alt and drag with a mouse button, or hold 1 / 2 / 3 and move the mouse
     ("3D View", "view3d.rotate", {"type": "LEFTMOUSE", "value": "PRESS", "alt": True}, None),
     ("3D View", "view3d.move", {"type": "MIDDLEMOUSE", "value": "PRESS", "alt": True}, None),
+    # middle drag orbits, a middle click switches between one view and four
+    ("3D View", "view3d.rotate", {"type": "MIDDLEMOUSE", "value": "CLICK_DRAG"}, None),
+    ("3D View", "blenda4d.quad_view", {"type": "MIDDLEMOUSE", "value": "CLICK"}, None),
     ("3D View", "view3d.zoom", {"type": "RIGHTMOUSE", "value": "PRESS", "alt": True}, None),
+    # Alt+wheel zooms like the wheel alone; Ctrl+Alt+wheel (Cmd+Option on a Mac) magnifies the picture around the
+    # pointer without moving the camera, and Ctrl+Alt+middle drag moves the magnified picture
+    ("3D View", "view3d.zoom", {"type": "WHEELINMOUSE", "value": "PRESS", "alt": True}, [("delta", 1)]),
+    ("3D View", "view3d.zoom", {"type": "WHEELOUTMOUSE", "value": "PRESS", "alt": True}, [("delta", -1)]),
+    ("3D View", "blenda4d.magnify_in", {"type": "WHEELINMOUSE", "value": "PRESS", "ctrl": True, "alt": True}, None),
+    ("3D View", "blenda4d.magnify_out", {"type": "WHEELOUTMOUSE", "value": "PRESS", "ctrl": True, "alt": True}, None),
+    ("3D View", "blenda4d.magnify_scroll", {"type": "TRACKPADPAN", "value": "ANY", "ctrl": True, "alt": True}, None),
+    ("3D View", "blenda4d.magnify_pan", {"type": "MIDDLEMOUSE", "value": "PRESS", "ctrl": True, "alt": True}, None),
     ("3D View", "view3d.move", {"type": "ONE", "value": "PRESS"}, None),
     ("3D View", "view3d.zoom", {"type": "TWO", "value": "PRESS"}, None),
     ("3D View", "view3d.rotate", {"type": "THREE", "value": "PRESS"}, None),
@@ -51,6 +62,9 @@ KEYS = [
     ("3D View", "object.editmode_toggle", {"type": "RET", "value": "PRESS"}, None),
     # Alt+G: group the selected objects under a null; F5: four views
     ("Object Mode", "blenda4d.group", {"type": "G", "value": "PRESS", "alt": True}, None),
+    ("Object Mode", "blenda4d.ungroup", {"type": "G", "value": "PRESS", "shift": True}, None),
+    ("Property Editor", "blenda4d.group", {"type": "G", "value": "PRESS", "alt": True}, None),
+    ("Property Editor", "blenda4d.ungroup", {"type": "G", "value": "PRESS", "shift": True}, None),
     ("3D View", "blenda4d.quad_view", {"type": "F5", "value": "PRESS"}, None),
     # F9: record a key for the selected objects (I is Inset in Edit Mode)
     ("Object Mode", "anim.keyframe_insert", {"type": "F9", "value": "PRESS"}, None),
@@ -65,11 +79,16 @@ KEYS = [
     ("3D View", "view3d.view_selected", {"type": "O", "value": "PRESS"}, None),
     ("3D View", "view3d.view_selected", {"type": "F", "value": "PRESS"}, None),
     ("3D View", "view3d.view_all", {"type": "H", "value": "PRESS"}, None),
-    # --- views: F1 perspective / orthographic, F2 top, F3 right, F4 front
-    ("3D View", "view3d.view_persportho", {"type": "F1", "value": "PRESS"}, None),
-    ("3D View", "view3d.view_axis", {"type": "F2", "value": "PRESS"}, [("type", "TOP")]),
-    ("3D View", "view3d.view_axis", {"type": "F3", "value": "PRESS"}, [("type", "RIGHT")]),
-    ("3D View", "view3d.view_axis", {"type": "F4", "value": "PRESS"}, [("type", "FRONT")]),
+    # --- Undo View / Redo View: Ctrl+Shift+Z / Ctrl+Shift+Y over a viewport. On a Mac these are the real Ctrl key only
+    # (see NO_CMD): Cmd+Shift+Z stays redo. Elsewhere Ctrl+Shift+Z is redo too, so redo is also on Ctrl+Y everywhere.
+    ("3D View", "blenda4d.view_undo", {"type": "Z", "value": "PRESS", "ctrl": True, "shift": True, "repeat": True}, None),
+    ("3D View", "blenda4d.view_redo", {"type": "Y", "value": "PRESS", "ctrl": True, "shift": True, "repeat": True}, None),
+    ("Screen", "ed.redo", {"type": "Y", "value": "PRESS", "ctrl": True, "repeat": True}, None),
+    # --- views: F1 perspective, F2 top, F3 right, F4 front
+    ("3D View", "blenda4d.view_persp", {"type": "F1", "value": "PRESS"}, None),
+    ("3D View", "blenda4d.view_top", {"type": "F2", "value": "PRESS"}, None),
+    ("3D View", "blenda4d.view_right", {"type": "F3", "value": "PRESS"}, None),
+    ("3D View", "blenda4d.view_front", {"type": "F4", "value": "PRESS"}, None),
     # --- C: make the selected objects editable (their live result becomes a plain mesh)
     ("3D View", "blenda4d.make_editable", {"type": "C", "value": "PRESS"}, None),
     ("Property Editor", "blenda4d.make_editable", {"type": "C", "value": "PRESS"}, None),
@@ -110,10 +129,15 @@ ADD_FIRST = [
 # Default keys taken out with no replacement in the same key map.
 #   Space no longer plays everywhere (it picks the selection tool in the viewport; it still plays in the timeline).
 #   Orbiting while Alt is held must not snap the view to the nearest side view.
+#   Alt+wheel zooms the viewport instead of changing the frame.
 REMOVE = [
+    ("Frames", {"type": "WHEELUPMOUSE", "value": "PRESS", "alt": True}),
+    ("Frames", {"type": "WHEELDOWNMOUSE", "value": "PRESS", "alt": True}),
     ("Frames", {"type": "SPACE", "value": "PRESS"}),
 ]
 REMOVE_MODAL = {"View3D Rotate Modal": ("AXIS_SNAP_ENABLE", "AXIS_SNAP_DISABLE")}
+
+NO_CMD = {"blenda4d.view_undo", "blenda4d.view_redo"}      # no Cmd version of these on a Mac
 
 MODIFIERS = ("shift", "ctrl", "alt", "oskey")
 
@@ -198,6 +222,8 @@ def load():
     if platform == "darwin":
         from bl_keymap_utils.platform_helpers import keyconfig_data_oskey_from_ctrl_for_macos
         data = keyconfig_data_oskey_from_ctrl_for_macos(data)
+        for _name, _args, content in data:
+            content["items"] = [it for it in content["items"] if not (it[0] in NO_CMD and it[1].get("oskey"))]
     keyconfig_init_from_data(kc, data)
 
 

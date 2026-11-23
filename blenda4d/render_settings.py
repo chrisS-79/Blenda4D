@@ -101,6 +101,27 @@ TRACK = (
     ("display.shading", "light"), ("display.shading", "color_type"), ("display.shading", "show_backface_culling"),
     ("display.shading", "show_xray"), ("display.shading", "show_shadows"), ("display.shading", "show_cavity"),
     ("display.shading", "show_object_outline"), ("display.shading", "show_specular_highlight"),
+    # the renderer's Advanced settings
+    ("cycles", "use_preview_adaptive_sampling"), ("cycles", "preview_adaptive_min_samples"),
+    ("cycles", "preview_denoiser"), ("cycles", "preview_denoising_input_passes"),
+    ("cycles", "preview_denoising_prefilter"), ("cycles", "preview_denoising_quality"),
+    ("cycles", "preview_denoising_start_sample"), ("cycles", "preview_denoising_use_gpu"),
+    ("cycles", "denoising_input_passes"), ("cycles", "denoising_prefilter"), ("cycles", "denoising_quality"),
+    ("cycles", "denoising_use_gpu"), ("cycles", "use_guiding"), ("cycles", "guiding_training_samples"),
+    ("cycles", "use_surface_guiding"), ("cycles", "use_volume_guiding"), ("cycles", "use_light_tree"),
+    ("cycles", "light_sampling_threshold"), ("cycles", "sampling_pattern"), ("cycles", "seed"),
+    ("cycles", "use_animated_seed"), ("cycles", "scrambling_distance"), ("cycles", "auto_scrambling_distance"),
+    ("cycles", "preview_scrambling_distance"), ("cycles", "min_light_bounces"), ("cycles", "min_transparent_bounces"),
+    ("cycles", "use_layer_samples"), ("cycles", "use_pixel_jitter"), ("cycles", "use_sample_subset"),
+    ("cycles", "sample_offset"), ("cycles", "sample_subset_length"), ("cycles", "fast_gi_method"),
+    ("cycles", "ao_bounces"), ("cycles", "ao_bounces_render"), ("cycles", "offscreen_dicing_scale"),
+    ("cycles", "volume_step_rate"), ("cycles", "volume_preview_step_rate"), ("cycles", "volume_max_steps"),
+    ("cycles", "volume_biased"), ("cycles", "film_transparent_roughness"), ("cycles", "texture_limit"),
+    ("cycles", "use_camera_cull"), ("cycles", "use_distance_cull"), ("cycles", "camera_cull_margin"),
+    ("cycles", "distance_cull_margin"), ("cycles", "debug_use_spatial_splits"), ("cycles", "debug_use_hair_bvh"),
+    ("cycles", "debug_use_compact_bvh"), ("cycles", "debug_bvh_time_steps"), ("render", "simplify_subdivision"),
+    ("render", "simplify_child_particles"), ("render", "simplify_volumes"), ("render", "use_simplify_normals"),
+    ("cycles_curves", "shape"), ("cycles_curves", "subdivisions"),
 )
 # set before the rest: which values are allowed later depends on these
 FIRST = (("render", "engine"), ("display_device", "display_device"), ("view", "view_transform"),
@@ -699,12 +720,20 @@ class BLENDA4D_OT_render(bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
+        if bpy.app.is_job_running("RENDER"):
+            self.report({"INFO"}, "A render is running")
+            return {"CANCELLED"}
         prepare(scene, self.animation)
-        save = scene.b4d_render.save and not self.animation
+        keep = scene.b4d_render.save or self.animation       # animations are always written
+        from . import viewer
+        if not bpy.app.background:
+            first, last = (scene.frame_start, scene.frame_end) if self.animation else (scene.frame_current,) * 2
+            viewer.begin(scene, first, last, keep)
         try:
             res = bpy.ops.render.render("EXEC_DEFAULT" if bpy.app.background else "INVOKE_DEFAULT",
-                                        animation=self.animation, write_still=save)
+                                        animation=self.animation, write_still=not self.animation and (keep or not bpy.app.background))
         except RuntimeError as ex:
+            viewer.failed()
             _restore()
             self.report({"ERROR"}, str(ex))
             return {"CANCELLED"}
@@ -730,6 +759,13 @@ class BLENDA4D_OT_render_settings(bpy.types.Operator):
         ensure(context.scene)
         wm = context.window_manager
         ensure_pages(wm)
+        if roles.areas(context.screen, "PV_TOP") and roles.areas(context.screen, "OBJECTS"):      # the Render Viewer is there
+            from . import build, viewer
+            if build.busy():
+                return {"CANCELLED"}
+            win = context.window
+            build.run_steps(viewer.leave_steps(win), done=lambda: dock(win))
+            return {"FINISHED"}
         if roles.areas(context.screen, "OBJECTS"):           # Blenda's layout: in the viewport's place, under its tabs
             return {"FINISHED"} if dock(context.window) else {"CANCELLED"}
         old = _window_with_role(context)
@@ -746,6 +782,8 @@ class BLENDA4D_OT_render_settings(bpy.types.Operator):
         roles.set_role(area, ROLE)
 
         def finish():
+            if not roles.alive(area):
+                return None
             try:
                 roles.hide_nav(area, win)
                 area.tag_redraw()
@@ -770,6 +808,8 @@ def dock(window):
     tries = [0]
 
     def finish():
+        if not roles.alive(area):
+            return None
         try:
             if not roles.set_role(area, ROLE) and tries[0] < 20:
                 tries[0] += 1
@@ -819,6 +859,11 @@ class BLENDA4D_OT_view_tab(bpy.types.Operator):
 
     def execute(self, context):
         show_view(context.screen)
+        if roles.areas(context.screen, "PV_TOP"):
+            from . import build, viewer
+            if build.busy():
+                return {"CANCELLED"}
+            build.run_steps(viewer.leave_steps(context.window))
         return {"FINISHED"}
 
 

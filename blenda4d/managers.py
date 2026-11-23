@@ -50,7 +50,11 @@ OM_MENUS = [menus.simple_menu("File", [I("Merge Objects...", "wm.append", "APPEN
                                         I("Select All", "object.select_all", action="SELECT"), I("Deselect All", "object.select_all", action="DESELECT")], "om"),
             menus.simple_menu("View", [I("Expand All", "blenda4d.om_expand", open=True), I("Collapse All", "blenda4d.om_expand", open=False)], "om"),
             menus.simple_menu("Object", [I("Group Objects", "blenda4d.group", "OUTLINER_OB_EMPTY"),
+                                          I("Ungroup Objects", "blenda4d.ungroup", "X"),
+                                          I("Delete Without Children", "blenda4d.delete_without_children", "TRASH"),
+                                          I("Select Children", "blenda4d.select_children", "OUTLINER"), menus.SEP,
                                           I("Make Editable", "blenda4d.make_editable", "MESH_DATA"),
+                                          I("Current State to Object", "blenda4d.current_state", "FREEZE"),
                                           I("Duplicate", "object.duplicate_move", "DUPLICATE")], "om"),
             menus.simple_menu("Tags", [I("Material", "blenda4d.mat_tag", "MATERIAL"), I("Smoothing", "object.shade_auto_smooth", "SHADING_SMOOTH")], "om"),
             menus.simple_menu("Bookmarks", [I("Add Bookmark")], "om")]
@@ -84,6 +88,8 @@ FONT_PAGE = []               # [fn(col, ob)]: the text object's Object page (tex
 CAMERA_TABS = []             # its extra tabs after Basic, Coord., Object
 CAMERA_TITLES = {}
 AM_SUBJECTS = {}             # "TAG" -> fn(layout, context, ob) -> True when it drew the page (wm.b4d_am_subject "TAG:...")
+OM_TAG_PICK = []             # [fn(layout, ob, tag key, icon)]: a menu-made tag as a button that shows its page
+OM_DROP = []                 # [fn(context, objects, event) -> True]: a drag out of the Object Manager let go elsewhere
 OM_TAG_BUTTON = []           # [fn(layout, ob, slot_index, material)]: draws a material swatch as a clickable tag
 _clicks = ["", 0.0]          # last Object Manager click: row name, time (two on one row = rename)
 _renamed = [0.0]
@@ -330,8 +336,10 @@ class BLENDA4D_OT_om_drag(bpy.types.Operator):
                 self.region.tag_redraw()
             return {"RUNNING_MODAL"}
         if event.type == "LEFTMOUSE" and event.value == "RELEASE":
-            t = self._target(context, event)
             self._end(context)
+            if any(f(context, self.objs, event) for f in OM_DROP):     # let go over a tag's page: fills its object field
+                return {"FINISHED"}
+            t = self._target(context, event)
             if not t:
                 return {"CANCELLED"}
             n = reparent(self.objs, None if t == TOP_LEVEL else bpy.data.objects.get(t))
@@ -379,6 +387,8 @@ def _tags(ob):
             out.append(("MATERIAL", slot.material, i))
     if ob.type == "MESH" and any(m.type == "SMOOTH_BY_ANGLE" or m.name.startswith("Smooth") for m in ob.modifiers):
         out.append(("SHADING_SMOOTH", None, -1))
+    from . import om_menu
+    out += [(icon, None, key) for icon, key in om_menu.tags(ob)]     # the slot is the tag's key
     return out
 
 
@@ -470,7 +480,7 @@ def _om_fit_zoom(context, region):
     for ob, depth in rows:
         widest = max(widest, h * (2.4 + 0.8 * depth) + blf.dimensions(0, ob.name)[0])
     tags = max((len(_tags(ob)) for ob, _d in rows), default=0)
-    content = widest + (3 + tags) * h + 1.2 * h
+    content = widest + (2 + tags) * h + 1.2 * h       # the stacked dots and the check, then the tags
     return max(1.0, min(ZOOM_LIMIT, region.width / max(content, 1.0)))
 
 
@@ -609,7 +619,7 @@ class BLENDA4D_PT_objects(roles.RolePanel, bpy.types.Panel):
         drop = context.window_manager.b4d_om_drop
         rows = visible_rows(context)
         tags = max((len(_tags(ob)) + (ob.type == "CAMERA") for ob, _d in rows), default=0)   # every row keeps room for the most tags,
-        split = _status_split(context, 3 + tags)                      # so the dots and checks stay in columns
+        split = _status_split(context, 2 + tags)                      # so the dots and checks stay in columns
         for ob, depth in rows:
             self._row(col, ob, depth, tags, split)
 
@@ -631,8 +641,7 @@ class BLENDA4D_PT_objects(roles.RolePanel, bpy.types.Panel):
         name.label(text=ob.name, **type_icon_kw(ob))     # a label, so a press here can start a drag (see om_drag)
         right = sp.row(align=True)
         right.alignment = "RIGHT"
-        right.prop(ob, "hide_viewport", text="", emboss=False, icon="LAYER_ACTIVE" if not ob.hide_viewport else "LAYER_USED")
-        right.prop(ob, "hide_render", text="", emboss=False, icon="LAYER_ACTIVE" if not ob.hide_render else "LAYER_USED")
+        right.operator("blenda4d.om_dot", text="", emboss=False, **dots_kw(ob)).name = ob.name   # viewport over render
         right.prop(ob, "b4d_enabled", text="", emboss=False, icon="CHECKMARK" if ob.b4d_enabled else "X")
         if ob.type == "CAMERA":                            # the camera's view switch: filled while looking through it
             right.operator("blenda4d.om_look_through", text="", emboss=False,
@@ -642,6 +651,8 @@ class BLENDA4D_PT_objects(roles.RolePanel, bpy.types.Panel):
                 OM_TAG_BUTTON[0](right, ob, slot, mat)
             elif mat is not None:
                 right.label(text="", icon_value=right.icon(mat))
+            elif isinstance(slot, str) and OM_TAG_PICK:
+                OM_TAG_PICK[0](right, ob, slot, icon)
             else:
                 right.label(text="", icon=icon)
         for _ in range(tag_room - len(_tags(ob)) - (ob.type == "CAMERA")):
@@ -665,8 +676,10 @@ def looking_through(context, ob):
     """True while the viewport looks through this camera."""
     if context.scene.camera != ob:
         return False
-    r3 = _region_3d(_big_view(context))
-    return r3 is not None and r3.view_perspective == "CAMERA"
+    from . import magnify
+    area = _big_view(context)
+    r3 = _region_3d(area)
+    return r3 is not None and r3.view_perspective == "CAMERA" and not magnify.on(area.spaces.active)
 
 
 class BLENDA4D_OT_om_look_through(bpy.types.Operator):
@@ -709,6 +722,9 @@ def _page_tabs(ob):
     tabs = list(TABS_COMMON)
     if ob.type == "MESH":
         tabs.append(("PHONG", "Phong", ""))
+        from . import uvtab
+        if uvtab.editor(getattr(bpy.context, "screen", None)) is not None:
+            tabs.append(("UV", "UV", ""))
     if ob.type == "CAMERA" and CAMERA_PAGES:
         tabs += CAMERA_TABS
     if ob.type == "LIGHT":
@@ -930,6 +946,11 @@ def page_phong(col, ob):
     col.operator("object.shade_auto_smooth", text="Smooth by Angle")
 
 
+def page_uv(col, ob):
+    from . import uvtab
+    uvtab.page(col, bpy.context, ob)
+
+
 def page_light_details(col, ob):
     d = ob.data
     col.prop(d, "diffuse_factor", text="Diffuse")
@@ -946,7 +967,7 @@ def page_light_shadow(col, ob):
     col.prop(d, "shadow_soft_size", text="Shadow Radius")
 
 
-PAGES = {"BASIC": page_basic, "COORD": page_coord, "OBJECT": page_object, "PHONG": page_phong,
+PAGES = {"BASIC": page_basic, "COORD": page_coord, "OBJECT": page_object, "PHONG": page_phong, "UV": page_uv,
          "DETAILS": page_light_details, "SHADOW": page_light_shadow}
 
 
@@ -969,12 +990,15 @@ class BLENDA4D_PT_attributes(roles.RolePanel, bpy.types.Panel):
         if phong.draw_page(layout, context):              # the Phong Break Selection tool's options
             return
         fn = AM_SUBJECTS.get(wm.b4d_am_subject.partition(":")[0])
-        if fn is not None and wm.b4d_am_subject.startswith("MAT:") and fn(layout, context, ob):
+        if fn is not None and wm.b4d_am_subject.startswith(("MAT:", "OTAG:")) and fn(layout, context, ob):
             return                                         # a material picked in the Material Manager
         if ob is None:
             layout.label(text="Nothing selected")
             return
         if fn is not None and fn(layout, context, ob):
+            return
+        from . import sculpttools
+        if sculpttools.draw_page(layout, context, ob):     # sculpting: the brush
             return
         head = layout.row(align=True)
         kind = prim_kind(ob)
@@ -1147,29 +1171,111 @@ classes = (BLENDA4D_OT_om_look_through, BLENDA4D_OT_size_step, BLENDA4D_OT_om_de
            BLENDA4D_PT_objects, BLENDA4D_PT_om_bar, BLENDA4D_PT_om_head, BLENDA4D_PT_attributes, BLENDA4D_PT_materials, BLENDA4D_PT_assets)
 
 
+# --- the visibility dots: 0 default (as the parent), 1 on (always shown), 2 off (hidden) -----------------------------
+_VIS_KEY = {"hide_viewport": "_b4d_vis_e", "hide_render": "_b4d_vis_r"}
+VIS_STATES = ("default", "on", "off")
+
+
+def vis_state(ob, attr):
+    """The dot's state; an object Blenda never set reads from Blender's own switch (hidden = off)."""
+    v = ob.get(_VIS_KEY[attr])
+    return int(v) if v is not None else (2 if getattr(ob, attr) else 0)
+
+
+def _hidden(ob, attr):
+    s = vis_state(ob, attr)
+    if s == 2 or not ob.get("_b4d_enabled", True):
+        return True
+    if s == 1:
+        return False
+    return _hidden(ob.parent, attr) if ob.parent is not None else False
+
+
+def apply_vis(ob, attr):
+    """Set Blender's switch on the object and everything under it from the dots: a default dot follows its parent."""
+    tree = [ob, *ob.children_recursive]
+    for o in tree:                                   # keep each object's own state before any switch changes
+        if o.get(_VIS_KEY[attr]) is None:
+            o[_VIS_KEY[attr]] = vis_state(o, attr)
+    for o in tree:
+        if attr == "hide_render" and "b4d_consumed" in o:     # a generator's input stays out of renders
+            continue
+        h = _hidden(o, attr)
+        if getattr(o, attr) != h:
+            setattr(o, attr, h)
+
+
 def _vis_get(attr):
     def get(self):
-        return 2 if getattr(self, attr) else 0
+        return vis_state(self, attr)
     return get
 
 
 def _vis_set(attr):
     def put(self, v):
-        setattr(self, attr, v == 2)
+        self[_VIS_KEY[attr]] = int(v)
+        apply_vis(self, attr)
     return put
 
 
 def _enabled_set(self, v):
     self["_b4d_enabled"] = bool(v)
-    self.hide_viewport = not v
-    self.hide_render = not v
+    if not v:
+        self.hide_viewport = True
+        self.hide_render = True
+    else:
+        for attr in _VIS_KEY:
+            apply_vis(self, attr)
+
+
+class BLENDA4D_OT_om_dot(bpy.types.Operator):
+    bl_idname = "blenda4d.om_dot"
+    bl_label = "Visibility"
+    bl_options = {"UNDO", "INTERNAL"}
+    name: bpy.props.StringProperty(options={"SKIP_SAVE"})
+    render: bpy.props.BoolProperty(options={"SKIP_SAVE"})
+
+    @classmethod
+    def description(cls, context, props):
+        return ("Visibility: the upper dot is the viewport, the lower dot renders. Grey follows the object above it, "
+                "green always shows it, red hides it; click a dot to step through them "
+                "(Blender: Hide in Viewport, Disable in Renders)")
+
+    def invoke(self, context, event):
+        """A click on the upper dot steps the viewport's, on the lower dot the render's."""
+        r = context.region
+        if roles.role(context.area) == "OBJECTS" and r is not None and r.type == "WINDOW":
+            y = r.view2d.region_to_view(0, event.mouse_y - r.y)[1]
+            h = row_height()
+            self.render = ((-y - rows_top() * h) / h) % 1.0 >= 0.5
+        return self.execute(context)
+
+    def execute(self, context):
+        ob = bpy.data.objects.get(self.name)
+        if ob is None:
+            return {"CANCELLED"}
+        attr = "hide_render" if self.render else "hide_viewport"
+        ob[_VIS_KEY[attr]] = (vis_state(ob, attr) + 1) % 3
+        apply_vis(ob, attr)
+        for a in context.screen.areas if context.screen else ():
+            a.tag_redraw()
+        return {"FINISHED"}
+
+
+classes += (BLENDA4D_OT_om_dot,)
+
+
+def dots_kw(ob):
+    from . import icons as _icons
+    iv = _icons.icon(f"dots_{VIS_STATES[vis_state(ob, 'hide_viewport')]}_{VIS_STATES[vis_state(ob, 'hide_render')]}", "om")
+    return {"icon_value": iv} if iv else {"icon": "HIDE_ON" if ob.hide_viewport else "HIDE_OFF"}
 
 
 def register():
     for c in classes:
         bpy.utils.register_class(c)
     O, W = bpy.types.Object, bpy.types.WindowManager
-    vis = [("DEFAULT", "Default", "Shown as usual"), ("ON", "On", "Shown"), ("OFF", "Off", "Hidden")]
+    vis = [("DEFAULT", "Default", "As the object above it (shown at the top level)"), ("ON", "On", "Always shown"), ("OFF", "Off", "Hidden")]
     O.b4d_om_closed = bpy.props.BoolProperty(description='Whether the objects under this one are folded away in the Object Manager', default=False)
     O.b4d_enabled = bpy.props.BoolProperty(description='Switch the object on or off in the viewport and in renders', name="Enabled", get=lambda self: self.get("_b4d_enabled", True), set=_enabled_set)
     O.b4d_vis_editor = bpy.props.EnumProperty(description='Show or hide the object in the viewport (Blender: Hide in Viewport)', items=vis, get=_vis_get("hide_viewport"), set=_vis_set("hide_viewport"))

@@ -17,7 +17,7 @@ import bpy
 import gpu
 from gpu_extras.batch import batch_for_shader
 
-from . import bars, icons, switch
+from . import bars, icons, roles, switch
 
 CELL = 48              # px at UI scale 1: as big as the tools column's buttons
 SIDE = 4               # px between the strip's edge and the cells (Blender's own buttons sit 10 px in)
@@ -129,10 +129,11 @@ def _layout(region):
     gaps = sum(1 for it in items if it is None)
     cell = min(CELL * s, region.width - 2 * SIDE * s)    # as big as the tools column's, at every scale; when the
     total = n * cell + gaps * GAP * s + 2 * TOP * s       # strip is shorter it scrolls, as that column does
-    _state["max_scroll"] = max(0.0, total - region.height)
+    high = region.height - _inset()
+    _state["max_scroll"] = max(0.0, total - high)
     _state["scroll"] = min(max(_state.get("scroll", 0.0), 0.0), _state["max_scroll"])
     x0 = (region.width - cell) / 2
-    y = region.height - TOP * s + _state["scroll"]
+    y = high - TOP * s + _state["scroll"]
     boxes = []
     for it in items:
         if it is None:
@@ -144,8 +145,24 @@ def _layout(region):
 
 
 def _strip_region(context):
-    r = context.region
-    return r is not None and r.type == "TOOLS" and context.area is not None and context.area.type == "VIEW_3D"
+    """The viewport's strip, or the column's own area (four views, or editors under the viewport)."""
+    r, a = context.region, context.area
+    if r is None or a is None:
+        return False
+    return (r.type == "TOOLS" and a.type == "VIEW_3D") or (r.type == "WINDOW" and roles.role(a) == "CREATE")
+
+
+def _inset():
+    """Its own area starts level with the viewport's header, the strip below it: the cells stay where they are."""
+    ctx = bpy.context
+    if ctx.region is None or ctx.region.type != "WINDOW" or roles.role(ctx.area) != "CREATE":
+        return 0
+    from . import build
+    return build.view_top(ctx.window, ctx.area)
+
+
+def _shows(area):
+    return area.type == "VIEW_3D" or roles.role(area) in {"CREATE", "TL_EDIT"}
 
 
 def _draw():
@@ -183,10 +200,12 @@ def _draw():
             sh.uniform_float("color", MARK)
             batch.draw(sh)
             gpu.state.blend_set("NONE")
+    if _state["scroll"] > 0 and _inset():                 # scrolled cells do not show through above the column
+        _rect(0, region.height - _inset(), region.width, region.height, BG)
 
 
 def _hit(region, x, y):
-    if region.as_pointer() != _state.get("region"):
+    if region.as_pointer() != _state.get("region") or y > region.height - _inset():
         return None, None
     for i, b in enumerate(_state["boxes"]):
         if b[0] <= x <= b[2] and b[1] <= y <= b[3]:
@@ -196,7 +215,7 @@ def _hit(region, x, y):
 
 def _redraw(context):
     for a in context.screen.areas:
-        if a.type == "VIEW_3D":
+        if _shows(a):
             a.tag_redraw()
 
 
@@ -221,7 +240,7 @@ def _tip_tick():
     _tip["shown"] = True
     for w in bpy.context.window_manager.windows:
         for a in w.screen.areas:
-            if a.type == "VIEW_3D":
+            if _shows(a):
                 a.tag_redraw()
     return None
 
@@ -354,13 +373,15 @@ classes = (BLENDA4D_OT_strip_hover, BLENDA4D_OT_strip_click, BLENDA4D_OT_strip_s
 def register():
     for c in classes:
         bpy.utils.register_class(c)
-    _handles.append((bpy.types.SpaceView3D.draw_handler_add(_draw, (), "TOOLS", "POST_PIXEL"), "TOOLS"))
-    _handles.append((bpy.types.SpaceView3D.draw_handler_add(_draw_tip, (), "WINDOW", "POST_PIXEL"), "WINDOW"))
+    for space, fn, kind in ((bpy.types.SpaceView3D, _draw, "TOOLS"), (bpy.types.SpaceView3D, _draw_tip, "WINDOW"),
+                            (bpy.types.SpaceProperties, _draw, "WINDOW")):
+        _handles.append((space, space.draw_handler_add(fn, (), kind, "POST_PIXEL"), kind))
     kc = bpy.context.window_manager.keyconfigs.addon
     if kc:
-        km = kc.keymaps.new(name="3D View Generic", space_type="VIEW_3D", region_type="WINDOW")
-        _keymaps.append((km, km.keymap_items.new(BLENDA4D_OT_strip_click.bl_idname, "LEFTMOUSE", "PRESS", head=True)))
-        _keymaps.append((km, km.keymap_items.new(BLENDA4D_OT_strip_hover.bl_idname, "MOUSEMOVE", "ANY", head=True)))
+        for name, space in (("3D View Generic", "VIEW_3D"), ("Property Editor", "PROPERTIES")):
+            km = kc.keymaps.new(name=name, space_type=space, region_type="WINDOW")
+            _keymaps.append((km, km.keymap_items.new(BLENDA4D_OT_strip_click.bl_idname, "LEFTMOUSE", "PRESS", head=True)))
+            _keymaps.append((km, km.keymap_items.new(BLENDA4D_OT_strip_hover.bl_idname, "MOUSEMOVE", "ANY", head=True)))
         kmv = kc.keymaps.new(name="View2D Buttons List", space_type="EMPTY", region_type="WINDOW")   # before the
         for ev in ("WHEELUPMOUSE", "WHEELDOWNMOUSE", "TRACKPADPAN"):                                # strip's scroll
             _keymaps.append((kmv, kmv.keymap_items.new(BLENDA4D_OT_strip_scroll.bl_idname, ev, "ANY", head=True)))
@@ -375,9 +396,9 @@ def unregister():
         except (ReferenceError, RuntimeError):
             pass
     _keymaps.clear()
-    for h, kind in _handles:
+    for space, h, kind in _handles:
         try:
-            bpy.types.SpaceView3D.draw_handler_remove(h, kind)
+            space.draw_handler_remove(h, kind)
         except ValueError:
             pass
     _handles.clear()

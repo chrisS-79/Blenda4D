@@ -5,7 +5,7 @@ settings Blender has no equivalent for are left out rather than shown greyed."""
 
 import bpy
 
-from . import managers
+from . import camview, managers
 
 TABS = [("PHYSICAL", "Physical", ""), ("DETAILS", "Details", ""), ("COMPOSITION", "Composition", "")]
 TITLES = {"OBJECT": "Object Properties", "PHYSICAL": "Physical", "DETAILS": "Details", "COMPOSITION": "Composition Helpers"}
@@ -68,6 +68,11 @@ def page_object(col, ob):
     f.operator("ui.eyedropper_depth", text="", icon="EYEDROPPER")
     r.prop_decorator(cam.dof, "focus_distance")
     _row(col, cam.dof, "focus_object", "Focus Object")
+    col.separator()
+    _row(col, cam, "b4d_room", "Space Around Picture", slider=True)
+    _row(col, cam, "b4d_tint_on", "Tinted Border")
+    _row(col, cam, "b4d_tint_opacity", "Opacity", cam.show_passepartout, slider=True)
+    _row(col, cam, "b4d_tint", "Color", cam.show_passepartout)
 
 
 def page_physical(col, ob):
@@ -104,7 +109,7 @@ def page_composition(col, ob):
 PAGES = {"OBJECT": page_object, "PHYSICAL": page_physical, "DETAILS": page_details, "COMPOSITION": page_composition}
 
 
-# --- settings shown in the C4D-style units ---------------------------------------------------------------------------
+# --- settings shown in photographic units ---------------------------------------------------------------------------
 def _offset(axis):
     attr = "shift_" + axis
 
@@ -148,11 +153,15 @@ class BLENDA4D_OT_add_camera(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
+        from . import magnify
+        magnify.leave_all()                                # the new camera sees what the viewport's own view sees
         sp = _view_for(context)
         if context.mode != "OBJECT" and context.object is not None:
             bpy.ops.object.mode_set(mode="OBJECT")
         bpy.ops.object.camera_add()
         ob = context.active_object
+        if ob is not None and ob.type == "CAMERA":
+            camview.start(ob.data)                         # the view options last chosen
         if sp is None or ob is None or ob.type != "CAMERA":
             return {"FINISHED"}
         rv = sp.region_3d

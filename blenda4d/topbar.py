@@ -348,7 +348,10 @@ class BLENDA4D_OT_tb_render_view(bpy.types.Operator):
                 _state["render_view"] = sp.shading.type
                 sp.shading.type = "RENDERED"
         if self.how in ("REGION", "INTERACTIVE") and area is not None:
+            from . import magnify
+            magnify.leave(area)
             _set(context.scene.render, "use_border", True)
+            _state["live_region"] = self.how == "INTERACTIVE"
             with context.temp_override(window=context.window, area=area, region=region):
                 bpy.ops.view3d.render_border("INVOKE_DEFAULT")
         if self.how == "SELECTION":
@@ -403,6 +406,10 @@ class BLENDA4D_MT_tb_render_view(bpy.types.Menu):
         for how, label in (("VIEW", "Render View"), ("SELECTION", "Render Selection"), ("REGION", "Render Region"),
                            ("INTERACTIVE", "Live Render Region")):
             self.layout.operator("blenda4d.tb_render_view", text=label).how = how
+        self.layout.separator()
+        self.layout.operator("blenda4d.region_resume", icon="PLAY")
+        self.layout.operator("blenda4d.region_pause", icon="PAUSE")
+        self.layout.operator("blenda4d.region_close", icon="X")
         self.layout.separator()
         self.layout.prop(context.scene.render, "use_border", text="Use Render Region")
 

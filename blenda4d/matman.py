@@ -282,23 +282,18 @@ def draw_materials(layout, context):
     mats = materials(context)
     if wm.b4d_mm_view == "ICONS":
         px = wm.b4d_mm_px
-        ui = context.preferences.system.ui_scale
-        avail = context.region.width / ui - 24
-        cw = px + 12                                    # one tile and its gap
-        cols = max(1, int(avail // cw))
+        cols, cw = grid_columns(context, px)
+        grid = layout.column(align=True)               # rows packed close: a small gap, the name right under each ball
         for i in range(0, len(mats), cols):
-            # the tiles get exactly cols * cw of the width, as even columns; the rest of the row stays empty
-            sp = layout.split(factor=min(1.0, cols * cw / max(avail, 1)), align=False)
-            row = sp.row(align=False)
-            sp.row()
+            if i:
+                grid.separator(factor=ROW_SEP)
+            row = grid.row(align=True)
+            row.alignment = "LEFT"
             for j in range(cols):
-                slot = row.row(align=True)
-                slot.alignment = "CENTER"
-                cell = slot.column(align=True)
-                cell.ui_units_x = px / 20
                 if i + j >= len(mats):
-                    cell.label(text="")
-                    continue
+                    break
+                cell = row.column(align=True)
+                cell.ui_units_x = cw / 20
                 mat = mats[i + j]
                 cell.template_icon(icon_value=tile_icon(mat, mat.name == cur, px, layout), scale=px / 20)
                 cell.operator("blenda4d.mat_pick", text=mat.name, emboss=mat.name == cur, depress=mat.name == cur).name = mat.name
@@ -347,9 +342,19 @@ def _px_update(self, context):
     _tag_redraw()
 
 
-GRID_TOP = 4.9         # units from the panel's top to the first row of tiles (title, menus, tool row): measured
+GRID_TOP = 4.3         # units from the panel's top to the first row of tiles (title, menus, tool row): measured
 NAME_UNITS = 1.0       # a tile's name button under its preview
-ROW_GAP = 0.25         # units between rows of tiles: measured (64 px tiles repeat every 89 px at 100%)
+TILE_GAP = 6           # pixels between tiles, side by side
+ROW_SEP = 0.5          # separator factor between rows of tiles
+ROW_GAP = 0.15         # units between rows of tiles that separator makes: measured (64 px tiles repeat every 87 px)
+LEFT = 11              # pixels from the panel's left edge to the first tile's cell: measured
+
+
+def grid_columns(context, px):
+    """(columns, column width in pixels at 100 %) of the icon view: as many as fit, each a ball and a small gap."""
+    ui = context.preferences.system.ui_scale
+    cw = px + TILE_GAP
+    return max(1, int((context.region.width / ui - LEFT - 4) // cw)), cw
 
 
 def tile_at(context, x, y):
@@ -364,21 +369,17 @@ def tile_at(context, x, y):
     vx, vy = region.view2d.region_to_view(x, y)
     down = -vy                                      # view y runs down from 0 at the panel's top
     px = wm.b4d_mm_px
-    avail = region.width / ui - 24
-    cw = px + 12
-    cols = max(1, int(avail // cw))
+    cols, cw = grid_columns(context, px)
     pitch = px * ui + (NAME_UNITS + ROW_GAP) * unit
     top = GRID_TOP * unit
     if down < top:
         return None, "above"                        # the title, menus and tool row
     row, dy = divmod(down - top, pitch)
-    slot = min(1.0, cols * cw / max(avail, 1)) * (region.width - 13 * ui) / cols   # one column's width
-    col = int((vx - 3.5 * ui) // slot)
+    col = int((vx - LEFT * ui) // (cw * ui))
     if not 0 <= col < cols:
         return None, None
-    centre = 3.5 * ui + (col + 0.5) * slot
     i = int(row) * cols + col
-    if i >= len(mats) or abs(vx - centre) > px * ui / 2:
+    if i >= len(mats) or (vx - LEFT * ui) - col * cw * ui > px * ui:
         return None, None
     if dy <= px * ui:
         return mats[i], "preview"
