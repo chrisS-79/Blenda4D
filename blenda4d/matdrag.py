@@ -81,6 +81,25 @@ def assign(ob, mat):
     return True
 
 
+def _region_under(context, match, x, y):
+    """The WINDOW region of the first area matching a predicate, under a window position.
+
+    context: the UI context; its window's screen holds the areas to search (a None window gives None).
+    match: a predicate area -> bool that picks the areas to search (e.g. roles.role(area) == "OBJECTS").
+    x, y: the window position (as event.mouse_x, event.mouse_y).
+    Returns the area's WINDOW region under the point, or None.
+    """
+    if context.window is None:
+        return None
+    for area in context.window.screen.areas:
+        if not match(area):
+            continue
+        for region in area.regions:
+            if region.type == "WINDOW" and region.x <= x < region.x + region.width and region.y <= y < region.y + region.height:
+                return region
+    return None
+
+
 def _role_under(context, role, x, y):
     """The window region of a role area (e.g. "MATERIALS") under a window position.
 
@@ -89,31 +108,17 @@ def _role_under(context, role, x, y):
     x, y: the window position (as event.mouse_x, event.mouse_y).
     Returns the area's WINDOW region under the point, or None.
     """
-    for area in context.window.screen.areas:
-        if roles.role(area) != role:
-            continue
-        for region in area.regions:
-            if region.type == "WINDOW" and region.x <= x < region.x + region.width and region.y <= y < region.y + region.height:
-                return region
-    return None
+    return _region_under(context, lambda area: roles.role(area) == role, x, y)
 
 
 def _om_under(context, x, y):
-    """The Object Manager's area and window region under a window position.
+    """The Object Manager's window region under a window position.
 
-    context: the UI context; its window's screen holds the areas to search (None window gives (None, None)).
+    context: the UI context; its window's screen holds the areas to search.
     x, y: the window position (as event.mouse_x, event.mouse_y).
-    Returns (area, region) of the Object Manager under the point, or (None, None).
+    Returns the Object Manager's WINDOW region under the point, or None.
     """
-    if context.window is None:
-        return None, None
-    for area in context.window.screen.areas:
-        if roles.role(area) != "OBJECTS":
-            continue
-        for region in area.regions:
-            if region.type == "WINDOW" and region.x <= x < region.x + region.width and region.y <= y < region.y + region.height:
-                return area, region
-    return None, None
+    return _region_under(context, lambda area: roles.role(area) == "OBJECTS", x, y)
 
 
 def _target(context, event):
@@ -123,7 +128,7 @@ def _target(context, event):
     event: the mouse event; its window position (mouse_x, mouse_y) is mapped to a row.
     Returns the row object's name, or "" when the mouse is over no row.
     """
-    _area, region = _om_under(context, event.mouse_x, event.mouse_y)
+    region = _om_under(context, event.mouse_x, event.mouse_y)
     if region is None:
         return ""
     rows = managers.visible_rows(context)
@@ -132,21 +137,13 @@ def _target(context, event):
 
 
 def _view_under(context, x, y):
-    """A 3D view's area and window region under a window position.
+    """A 3D view's window region under a window position.
 
-    context: the UI context; its window's screen holds the areas to search (None window gives (None, None)).
+    context: the UI context; its window's screen holds the areas to search.
     x, y: the window position (as event.mouse_x, event.mouse_y).
-    Returns (area, region) of a 3D view under the point, or (None, None).
+    Returns a 3D view's WINDOW region under the point, or None.
     """
-    if context.window is None:
-        return None, None
-    for area in context.window.screen.areas:
-        if area.type != "VIEW_3D":
-            continue
-        for region in area.regions:
-            if region.type == "WINDOW" and region.x <= x < region.x + region.width and region.y <= y < region.y + region.height:
-                return area, region
-    return None, None
+    return _region_under(context, lambda area: area.type == "VIEW_3D", x, y)
 
 
 def _view_target(context, event):
@@ -157,7 +154,7 @@ def _view_target(context, event):
     Returns the Object hit (the original, not an instance), or None on empty space or outside a 3D view.
     """
     from . import assets
-    _area, region = _view_under(context, event.mouse_x, event.mouse_y)
+    region = _view_under(context, event.mouse_x, event.mouse_y)
     if region is None:
         return None
     _loc, ob = assets.drop_point(context, region, event.mouse_x, event.mouse_y)
