@@ -124,6 +124,8 @@ def main():
     check(len(b.material_slots) == 1 and b.data.materials[0] == red, "a first slot is made")
     check(not matdrag.assign(light, green), "a light takes no material: the drop is refused")
     check(not matdrag.assign(None, green) and not matdrag.assign(a, None), "missing object or material: refused")
+    check(matdrag._can_take(a) and not matdrag._can_take(light) and not matdrag._can_take(None),
+          "_can_take: the cursor's drop-possible test matches what assign accepts")
 
     base = render(a)
     matdrag.assign(a, red)

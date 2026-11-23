@@ -9,6 +9,10 @@ highlights the row under it (a draw handler, like the Object Manager's own row h
 the material in that object's first slot (a new slot when the object has none); releasing over the 3D view ray-casts
 the surface under the mouse (like the Asset Browser's drop) and puts the material on the object hit — the same rule as
 Shift-clicking a material in the list.
+
+While the drag runs, the cursor is a + cross (Blender's CROSSHAIR cursor; COPY would be the arrow-with-plus badge, but
+Windows renders it as a plain arrow) when the release would land on an object that takes a material, and the stop sign
+(STOP) when it would not.
 """
 
 import bpy
@@ -65,6 +69,16 @@ def mat_at(context, x, y, region=None):
     return None
 
 
+def _can_take(ob):
+    """Whether an object can receive a material at all (its data has a material-slots list).
+
+    ob: the Object to test (None is allowed).
+    Returns True when assign() would accept the object; False for None and for objects whose data has no slots
+    (lights, cameras, ...).
+    """
+    return ob is not None and hasattr(getattr(ob, "data", None), "materials")
+
+
 def assign(ob, mat):
     """Give an object a material: mat goes into its first slot, or a new slot is made when it has none.
 
@@ -72,7 +86,7 @@ def assign(ob, mat):
     mat: the Material to assign (None is allowed and refused).
     Returns True when the material was put on the object, False when the object takes no material.
     """
-    if ob is None or mat is None or not hasattr(getattr(ob, "data", None), "materials"):
+    if mat is None or not _can_take(ob):
         return False
     if ob.data.materials:
         ob.data.materials[0] = mat
@@ -212,8 +226,10 @@ class BLENDA4D_OT_mm_drag(bpy.types.Operator):
         """Follow the mouse while dragging.
 
         context: the UI context; event: the current event. On mouse moves the Object Manager row under the mouse
-        is stored in wm.b4d_mat_drop (so the draw handler highlights it). On release the material is assigned to
-        that row's object, or to the object under the mouse in a 3D view. ESC, right-click and a fresh press cancel.
+        is stored in wm.b4d_mat_drop (so the draw handler highlights it) and the cursor is set to a + cross (CROSSHAIR)
+        when the release would land on an object that takes a material, to the stop sign (STOP) when it would not. On release
+        the material is assigned to that row's object, or to the object under the mouse in a 3D view. ESC, right-click
+        and a fresh press cancel.
         Returns {"RUNNING_MODAL"} while the drag continues, {"FINISHED"} after a drop, {"CANCELLED"} otherwise.
         """
         wm = context.window_manager
@@ -223,6 +239,9 @@ class BLENDA4D_OT_mm_drag(bpy.types.Operator):
                 wm.b4d_mat_drop = t
                 for a in context.window.screen.areas:
                     a.tag_redraw()
+            ob = bpy.data.objects.get(t) if t else _view_target(context, event)
+            # CROSSHAIR is a clear +; COPY would be the arrow-with-plus badge, but Windows renders it as a plain arrow
+            context.window.cursor_modal_set("CROSSHAIR" if _can_take(ob) else "STOP")
             return {"RUNNING_MODAL"}
         if event.type == "LEFTMOUSE" and event.value == "RELEASE":
             t = _target(context, event)
