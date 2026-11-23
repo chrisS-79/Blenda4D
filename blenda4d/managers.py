@@ -222,6 +222,8 @@ def visible_rows(context):
     out = []
 
     def walk(ob, depth):
+        if ob.get("b4d_internal"):                        # Blenda's own helpers (MoClone's clone bodies)
+            return
         if needle and needle not in ob.name.lower() and not any(needle in c.name.lower() for c in ob.children_recursive):
             return
         out.append((ob, depth))

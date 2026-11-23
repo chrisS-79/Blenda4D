@@ -25,7 +25,8 @@ TAGS = {
     "SCULPT": ("Sculpting", "Sculpt", "SCULPTMODE_HLT", "Multiresolution modifier"),   # put on by Subdivide while sculpting
 }
 CON = {"TARGET": "DAMPED_TRACK", "LOOK_CAMERA": "TRACK_TO", "ALIGN_SPLINE": "FOLLOW_PATH"}
-MENUS = ("Animation", "Material", "Modeling", "Other", "Simulation")
+MENUS = ("Animation", "Material", "Modeling", "MoClone", "Other", "Simulation")
+HOOKS = {}                            # tag key: (has, add, remove) for tags another module makes (field_tags.py)
 B4D = "b4d_tag"                       # constraints Blenda put on as a tag carry this in their name
 
 
@@ -35,6 +36,8 @@ def _con(ob, key):
 
 def has(ob, key):
     """Does the object carry this tag?"""
+    if key in HOOKS:
+        return HOOKS[key][0](ob, key)
     if key in CON:
         return _con(ob, key) is not None
     if key == "PHONG":
@@ -42,6 +45,8 @@ def has(ob, key):
                                          m.name.startswith("Smooth") for m in ob.modifiers)
     if key == "PROTECTION":
         return all(ob.lock_location) and all(ob.lock_rotation) and all(ob.lock_scale)
+    if key in {"RIGID", "COLLIDER"} and ob.get("b4d_type") == "cloner":   # MoClone: every clone is a body
+        return ob.get("b4d_dyn") == ("ACTIVE" if key == "RIGID" else "PASSIVE")
     if key in {"RIGID", "COLLIDER"}:
         rb = ob.rigid_body
         return rb is not None and (rb.type == "ACTIVE") == (key == "RIGID")
@@ -66,6 +71,8 @@ def _mesh_only(key):
 
 
 def add(context, ob, key):
+    if key in HOOKS:
+        return HOOKS[key][1](context, ob, key)
     if _mesh_only(key) and ob.type != "MESH":
         return False
     if has(ob, key):
@@ -87,6 +94,9 @@ def add(context, ob, key):
             bpy.ops.object.shade_auto_smooth()
         elif key == "PROTECTION":
             ob.lock_location = ob.lock_rotation = ob.lock_scale = (True, True, True)
+        elif key in {"RIGID", "COLLIDER"} and ob.get("b4d_type") == "cloner":
+            from . import moclone_dyn
+            moclone_dyn.tag(context, ob, "ACTIVE" if key == "RIGID" else "PASSIVE")
         elif key in {"RIGID", "COLLIDER"}:
             if ob.rigid_body is None:
                 bpy.ops.rigidbody.object_add(type="ACTIVE" if key == "RIGID" else "PASSIVE")
@@ -106,6 +116,8 @@ def add(context, ob, key):
 
 
 def remove(context, ob, key):
+    if key in HOOKS:
+        return HOOKS[key][2](context, ob, key)
     if key in CON:
         c = _con(ob, key)
         if c is not None:
@@ -118,6 +130,9 @@ def remove(context, ob, key):
             ob.modifiers.remove(m)
     elif key == "PROTECTION":
         ob.lock_location = ob.lock_rotation = ob.lock_scale = (False, False, False)
+    elif key in {"RIGID", "COLLIDER"} and ob.get("b4d_type") == "cloner":
+        from . import moclone_dyn
+        moclone_dyn.clear(ob)
     elif key in {"RIGID", "COLLIDER"}:
         with context.temp_override(object=ob, active_object=ob, selected_objects=[ob], selected_editable_objects=[ob]):
             bpy.ops.rigidbody.object_remove()

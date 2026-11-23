@@ -194,7 +194,7 @@ MAIN = {
              _m("Optimize", "mesh.remove_doubles", "AUTOMERGE_OFF"), _m("Subdivide", "mesh.subdivide", "MOD_SUBSURF"),
              _m("Triangulate", "mesh.quads_convert_to_tris", "MOD_TRIANGULATE"), _m("Untriangulate", "mesh.tris_convert_to_quads", "MESH_GRID")],
     "Volume": [item("Volume Builder"), item("Volume Mesher")],
-    "MoClone": [item("Cloner"), item("Matrix"), item("Fracture"), item("Voronoi Fracture"), SEP, item("Effectors"), item("Fields")],
+    "MoClone": [item("Cloner", "blenda4d.add_kind", "MOD_ARRAY", kind="cloner"), item("Matrix", "blenda4d.add_kind", "LIGHTPROBE_VOLUME", kind="matrix"), item("Fracture"), item("Voronoi Fracture"), SEP, sub("Effectors", "BLENDA4D_MT_fx_add", "FORCE_TURBULENCE"), sub("Fields", "BLENDA4D_MT_field_add", "SPHERE")],
     "Character": [item("Joint", "object.armature_add", "BONE_DATA")],
     "Animate": [item("Record Active Objects", "blenda4d.tl_record", "KEYFRAME_HLT"), item("Autokeying", "blenda4d.tl_autokey", "REC"),
                 item("Delete Keyframes", "anim.keyframe_delete_v3d", "X"), SEP,

@@ -76,7 +76,7 @@ KINDS = {
 }
 
 SOCKET = {"FLOAT": "NodeSocketFloat", "INT": "NodeSocketInt", "VECTOR": "NodeSocketVector", "BOOL": "NodeSocketBool",
-          "OBJECT": "NodeSocketObject"}
+          "OBJECT": "NodeSocketObject", "COLOR": "NodeSocketColor"}
 SKIN = ".b4d_skin"
 HARD = ".b4d_hard"
 SPLINE_KINDS = ("connect",)              # generators whose output can be a spline: a spline generator takes them too
@@ -574,6 +574,13 @@ def build_metaball(nodes, links, o, kids):
 BUILDERS = {"metaball": build_metaball, "extrude": build_extrude, "lathe": build_lathe, "sweep": build_sweep, "loft": build_loft, "symmetry": build_symmetry,
             "array": build_array, "instance": build_instance, "connect": build_connect, "boolean": build_boolean}
 
+# MoClone's Cloner and Matrix are node generators too (moclone_nodes.py)
+from . import moclone_nodes as _mc  # noqa: E402
+KINDS["cloner"] = ("Cloner", _mc.CLONER_INPUTS, _mc.CLONER_MENUS, True)
+KINDS["matrix"] = ("Matrix", _mc.MATRIX_INPUTS, _mc.MATRIX_MENUS, True)
+BUILDERS["cloner"] = _mc.build_cloner
+BUILDERS["matrix"] = _mc.build_matrix
+
 
 # --- group construction ---------------------------------------------------------------------------
 
@@ -625,7 +632,12 @@ def make_group(name, kind, kids, owner):
         kid_geo.append((child, info.outputs["Geometry"]))
     _kids.__exit__(None, None, None)
     with stage(tree, label):
-        out = BUILDERS[kind](nodes, links, o, kid_geo)
+        if kind in ("cloner", "matrix"):              # MoClone: the Cloner's effectors act between its points and its clones
+            from . import moclone_fx
+            gen_ob = bpy.data.objects.get(owner)
+            out = BUILDERS[kind](nodes, links, o, kid_geo, effect=moclone_fx.effect_fn(gen_ob) if gen_ob is not None else None)
+        else:
+            out = BUILDERS[kind](nodes, links, o, kid_geo)
     if "Shell Selection" in o:
         with stage(tree, "Selections"):
             out = _part_selections(nodes, links, o, out)

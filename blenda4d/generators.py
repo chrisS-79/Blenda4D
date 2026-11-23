@@ -214,6 +214,9 @@ def rebuild(gen):
             except Exception:
                 pass
     gen["b4d_kids"] = [o.name for o in kids]
+    if k in ("cloner", "matrix"):
+        from . import moclone_fx
+        gen["b4d_fx_sig"] = moclone_fx.signature(gen)
     gen.update_tag()
 
 
@@ -221,6 +224,10 @@ def _needs_rebuild(gen):
     mod = gen_mod(gen)
     if mod is None or mod.node_group is None or mod.node_group.get("b4d_owner") != gen.name:
         return True
+    if gen.get("b4d_type") in ("cloner", "matrix"):
+        from . import moclone_fx
+        if list(gen.get("b4d_fx_sig", [])) != moclone_fx.signature(gen):
+            return True
     return list(gen.get("b4d_kids", [])) != [o.name for o in inputs_of(gen)]
 
 
@@ -411,7 +418,9 @@ def _rows(col, ob, rows):
         holder = col.column(align=True)
         if len(r) > 2 and r[2] is not None:
             holder.active = bool(r[2](value))
-        if hasattr(v, "__len__") and not isinstance(v, str):
+        if hasattr(v, "__len__") and not isinstance(v, str) and len(v) == 4:      # a colour: one swatch
+            holder.prop(owner, attr, text=r[1])
+        elif hasattr(v, "__len__") and not isinstance(v, str):
             for i, axis in enumerate("XYZ"):
                 holder.prop(owner, attr, index=i, text=f"{r[1]} . {axis}")
         else:

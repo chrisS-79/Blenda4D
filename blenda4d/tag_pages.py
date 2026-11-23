@@ -97,6 +97,10 @@ def _protection_page(col, ob):
 
 
 def _rigid_page(col, ob):
+    if ob.get("b4d_type") == "cloner":                     # MoClone: the clones' bodies
+        from . import moclone_dyn
+        moclone_dyn.page(col, ob)
+        return
     rb = ob.rigid_body
     if rb is None:
         return
@@ -176,6 +180,9 @@ def _freeze_set(self, on):
         del self["_b4d_freeze"]
 
 
+EXTRA_PAGES = {}                     # tag key: fn(col, ob) for tags another module makes (field_tags.py)
+
+
 def draw_subject(layout, context, ob):
     """The tag's page; False when the subject is gone (the object's own page shows instead)."""
     s = context.window_manager.b4d_am_subject
@@ -194,6 +201,8 @@ def draw_subject(layout, context, ob):
     if key in om_menu.CON:
         con = om_menu._con(tob, key)
         {"ALIGN_SPLINE": _align_page, "TARGET": _target_page, "LOOK_CAMERA": _camera_page}[key](col, tob, con)
+    elif key in EXTRA_PAGES:
+        EXTRA_PAGES[key](col, tob)
     else:
         {"SCULPT": _sculpt_page, "PROTECTION": _protection_page, "RIGID": _rigid_page, "COLLIDER": _rigid_page, "CLOTH": _cloth_page,
          "COLLISION": _collider_page}.get(key, lambda c, o: None)(col, tob)
@@ -280,7 +289,8 @@ def register():
                     "quick; renders keep the full detail")
     managers.AM_SUBJECTS[SUBJECT] = draw_subject
     managers.OM_TAG_PICK[:] = [om_tag_button]
-    managers.OM_DROP[:] = [drop]
+    if drop not in managers.OM_DROP:                  # other features (MoClone's lists) take drops too
+        managers.OM_DROP.append(drop)
     if _watch not in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.append(_watch)
 
@@ -288,7 +298,8 @@ def register():
 def unregister():
     if _watch in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(_watch)
-    managers.OM_DROP.clear()
+    if drop in managers.OM_DROP:
+        managers.OM_DROP.remove(drop)
     managers.OM_TAG_PICK.clear()
     managers.AM_SUBJECTS.pop(SUBJECT, None)
     if hasattr(bpy.types.Object, "b4d_sculpt_freeze"):

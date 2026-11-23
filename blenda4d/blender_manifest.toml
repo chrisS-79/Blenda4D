@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "blenda4d"
-version = "0.1.28"
+version = "0.1.30"
 name = "Blenda 4D"
 tagline = "A motion-design layout, managers and workflows for Blender"
 maintainer = "Blenda 4D contributors"
@@ -10,7 +10,6 @@ type = "add-on"
 blender_version_min = "5.2.0"
 
 license = ["SPDX:GPL-3.0-or-later"]
-platforms = ["macos-arm64", "macos-x64", "linux-x64"]
 tags = ["User Interface", "3D View"]
 
 [permissions]

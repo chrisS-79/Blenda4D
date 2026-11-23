@@ -152,16 +152,22 @@ def _join(window, gone, keep):
     """Join `gone` into `keep` (keep stays, with its view). False when Blender would not do it."""
     screen = window.screen
     count = len(screen.areas)
-    try:
-        with bpy.context.temp_override(window=window, screen=screen, area=keep, region=_region(keep)):
-            # the area under source_xy stays, the one under target_xy goes
-            bpy.ops.screen.area_join(source_xy=(keep.x + keep.width // 2, keep.y + keep.height // 2),
-                                     target_xy=(gone.x + gone.width // 2, gone.y + gone.height // 2))
-    except (RuntimeError, TypeError):
-        pass
-    yield
-    if len(screen.areas) < count:
-        return True
+    # Run the join from a third area. Blender forgets the region under the last mouse event (screen.active_region)
+    # only when the join runs from an area other than the one that stays; run from `keep`, it can go on pointing
+    # into `gone` after `gone` is freed, and drawing the area edges then reads freed memory (a crash on Windows).
+    # With no third area, area_close below does the join (it always forgets that region).
+    other = next((a for a in screen.areas if a != keep and a != gone), None)
+    if other is not None:
+        try:
+            with bpy.context.temp_override(window=window, screen=screen, area=other, region=_region(other)):
+                # the area under source_xy stays, the one under target_xy goes
+                bpy.ops.screen.area_join(source_xy=(keep.x + keep.width // 2, keep.y + keep.height // 2),
+                                         target_xy=(gone.x + gone.width // 2, gone.y + gone.height // 2))
+        except (RuntimeError, TypeError):
+            pass
+        yield
+        if len(screen.areas) < count:
+            return True
     try:
         with bpy.context.temp_override(window=window, screen=screen, area=gone, region=_region(gone)):
             bpy.ops.screen.area_close()

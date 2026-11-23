@@ -221,6 +221,9 @@ def make_editable(context, gen):
     k = generators.kind(gen)
     if k is None:
         return False
+    if k == "cloner":                                   # a Null with each clone as its own object
+        from . import moclone
+        return moclone.make_editable(context, gen)
     if k in generators.NODE_KINDS:
         data = _bake(gen, context, gen, gen.name)
         if data is None:
