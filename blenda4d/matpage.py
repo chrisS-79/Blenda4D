@@ -105,13 +105,24 @@ def _switch_set(key):
     return put
 
 
+MORE = []                    # fn(scene) -> [(node, label)]: another renderer's own materials, before Blender's
+_item_text = []
+
+
+def _shaders():
+    out = [sh for fn in MORE for sh in fn(bpy.context.scene)] + list(SHADERS)
+    if out != _item_text:
+        _item_text[:] = out                                # Blender needs the texts kept
+    return _item_text
+
+
 def _shader_items(self, context):
-    return [(idname, label, "") for idname, label in SHADERS]
+    return [(idname, label, "") for idname, label in _shaders()]
 
 
 def _shader_get(self):
     node = _surface(self)
-    ids = [s[0] for s in SHADERS]
+    ids = [s[0] for s in _shaders()]
     return ids.index(node.bl_idname) if node is not None and node.bl_idname in ids else 0
 
 
@@ -123,7 +134,7 @@ def _shader_set(self, i):
     if out is None:
         out = tree.nodes.new("ShaderNodeOutputMaterial")
     old = _surface(self)
-    idname = SHADERS[i][0]
+    idname = _shaders()[i][0]
     if old is not None and old.bl_idname == idname:
         return
     new = tree.nodes.new(idname)

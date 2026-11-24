@@ -397,6 +397,8 @@ def catalog(context, area, kind):
     out, rows = [], []
     with context.temp_override(window=context.window, screen=context.screen, area=area, region=_region(area)):
         cls = getattr(bpy.types, KINDS[kind][1], None)
+        if kind == "SHADER" and not context.scene.render.engine.startswith(("BLENDER_", "CYCLES")):
+            cls = bpy.types.NODE_MT_add                    # another renderer's own nodes
         if cls is not None:
             _read(cls, out, frozenset())
     _items.clear()

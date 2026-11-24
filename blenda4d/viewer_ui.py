@@ -218,6 +218,13 @@ def _history(region, y, m):
     _label(c0 + 4 * s, y - 14 * s, "R", DIM, 11)
     _label(c1 + 4 * s, y - 14 * s, "Render Time", DIM, 11)
     y -= 21 * s
+    for live in V.LIVE:                                    # the live picture stays at the top of the list
+        if live["on"]():
+            strip._rect(m, y - 20 * s, x1, y, ACTIVE)
+        _disc(m + 14 * s, y - 10 * s, 4 * s, ORANGE if live["on"]() else DIM)
+        _label(m + 34 * s, y - 14 * s, _clip(live["label"](), c1 - m - 40 * s), ORANGE if live["on"]() else TEXT)
+        _hit(V.SIDE, (m, y - 20 * s, x1, y), ("live", live))
+        y -= 21 * s
     row, all_rows = 20 * s, rows()
     room = max(1, int((y - 4 * s) / row))
     S.scroll = max(0, min(S.scroll, len(all_rows) - room))
@@ -226,7 +233,7 @@ def _history(region, y, m):
         _label(m + 6 * s, y - 18 * s, "Renders show up here", DIM)
     for n, (q, i) in enumerate(all_rows[S.scroll:S.scroll + room]):
         yr = y - n * row
-        on = S.seq is q and i == S.index
+        on = S.seq is q and i == S.index and not any(v["on"]() for v in V.LIVE)
         if on:
             strip._rect(m, yr - row, x1, yr, ACTIVE)
         elif n % 2:
@@ -810,6 +817,8 @@ def _do(action):
         S.play = 0
         if not S.rendering:
             V.show(q, action[2])
+    elif kind == "live":
+        action[1]["stop" if action[1]["on"]() else "start"]()
     elif kind == "fold":
         action[1].open = not action[1].open
     elif kind == "flag":

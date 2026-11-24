@@ -206,6 +206,9 @@ def tile_icon(mat, selected, px, layout):
     Falls back to the plain preview until Blender has rendered it."""
     import numpy as np
     plain = layout.icon(mat)
+    ball = next((b for fn in BALLS for b in (fn(mat),) if b is not None), None) if _pcoll else None
+    if ball is not None:                              # a renderer without previews: drawn from the material's values
+        return _tile(mat, selected, px, ball)
     p = mat.preview
     if p is None or not _pcoll:
         return plain
@@ -220,13 +223,22 @@ def tile_icon(mat, selected, px, layout):
     pix.foreach_get(src)
     if not src[3::4].any():
         return plain                                  # not rendered yet
+    return _tile(mat, selected, px, src.reshape(h, w, 4))
+
+
+BALLS = []                            # fn(material) -> its picture (height, width, 4) or None
+
+
+def _tile(mat, selected, px, img):
+    import numpy as np
+    h, w = img.shape[:2]
+    src = img.ravel()
     f = max(1, round(w / max(px, 1))) if selected else 0
     key = f"{mat.name}|{f}"
     check = hash(src[::61].tobytes()) ^ hash((w, h))
     hit = _tiles.get(key)
     if hit is not None and hit[0] == check:
         return hit[1].icon_id
-    img = src.reshape(h, w, 4)
     sq = max(2, w // 8)
     yy, xx = np.mgrid[0:h, 0:w]
     bg = np.where((((yy // sq) + (xx // sq)) % 2 == 0)[..., None], np.array(CHECK_A, np.float32), np.array(CHECK_B, np.float32))

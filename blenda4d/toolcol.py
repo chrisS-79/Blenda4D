@@ -200,7 +200,7 @@ def columns(window):
         return []
     areas = window.screen.areas
     views = [a for a in areas if a.type == "VIEW_3D"]
-    if not views:
+    if not views or roles.areas(window.screen, "PV_TOP"):  # the Render Viewer's live picture is no viewport to work in
         return []
     left = min(a.x for a in views)
     out = []

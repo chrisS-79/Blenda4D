@@ -1139,12 +1139,17 @@ def draw_override(col, scene):
     sub.prop(p, "override_material", text="Custom Material")
 
 
+ENGINE_DRAW = {}             # engine id -> fn(col, scene): its page in Render Settings
+
+
 def draw_engine(col, scene):
     """The renderer's own page: what artists change every day in plain sight; for Cycles, the rest of its settings
     under Advanced, closed until opened."""
     e = scene.render.engine
     cy = getattr(scene, "cycles", None)
-    if e == "CYCLES" and cy is not None:
+    if e in ENGINE_DRAW:                                   # a renderer from another module
+        ENGINE_DRAW[e](col, scene)
+    elif e == "CYCLES" and cy is not None:
         _draw_cycles(col, scene, cy)
     elif e == "BLENDER_WORKBENCH":
         wb = scene.display.shading

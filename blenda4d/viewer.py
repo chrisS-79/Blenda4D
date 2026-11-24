@@ -25,6 +25,7 @@ FILTER = {"on": False, "sat": 0.0, "bright": 0.0, "contrast": 0.0, "exposure": 0
           "white": 1.0, "r": True, "g": True, "b": True, "invert": False}
 PREFIX = ".viewer "           # the names of the images made here: hidden, and never left in a saved file
 EXTRA = []                    # more rows under the buttons, from other modules: (height in px, draw(layout, context))
+LIVE = []                     # a live picture, from another module: {"on": fn, "start": fn, "stop": fn, "label": fn}
 
 
 class Frame:
@@ -167,6 +168,10 @@ def leave_steps(win):
     if _top(screen) is None or not roles.areas(screen, "OBJECTS"):
         return
     S.play = 0
+    for live in LIVE:
+        if live["on"]():
+            live["stop"]()
+            yield
     for role in (SIDE, BOTTOM, TOP, "VIEW_TABS"):
         pic = _pic(win)
         for a in roles.areas(screen, role):
@@ -340,6 +345,9 @@ def _drop(paths):
 def show(seq, index):
     """Put a frame in the picture. Blender's Image Editor keeps the frames it has read, so a sequence plays."""
     S.seq, S.index, S.layers = seq, max(0, min(index, len(seq.frames) - 1)), False
+    for live in LIVE:
+        if live["on"]():
+            live["stop"]()
     sp, frame = _space(), current()
     if sp is None or frame is None:
         return redraw()

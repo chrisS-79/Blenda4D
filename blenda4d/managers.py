@@ -85,6 +85,7 @@ def manager_title(layout, title, right_tabs=None):
 # --- Object Manager -------------------------------------------------------------------------------------------------
 CAMERA_PAGES = {}            # tab -> fn(col, ob): the camera's own pages (cameras.py)
 FONT_PAGE = []               # [fn(col, ob)]: the text object's Object page (texts.py)
+OCTANE_PAGE = []             # [fn(col, ob)]: the installed renderer's page for an object (octane_live.py)
 CAMERA_TABS = []             # its extra tabs after Basic, Coord., Object
 CAMERA_TITLES = {}
 AM_SUBJECTS = {}             # "TAG" -> fn(layout, context, ob) -> True when it drew the page (wm.b4d_am_subject "TAG:...")
@@ -784,7 +785,7 @@ def _page_tabs(ob):
         own = [(t[0], t[1], "") for t in kinds.KINDS[k]["tabs"]]
         if own and kinds.KINDS[k].get("own_tabs_only"):
             return own
-        return TABS_COMMON[:2] + own if own else list(TABS_COMMON)
+        return (TABS_COMMON[:2] + own if own else list(TABS_COMMON)) + _octane_tab()
     tabs = list(TABS_COMMON)
     if ob.type == "MESH":
         tabs.append(("PHONG", "Phong", ""))
@@ -796,7 +797,11 @@ def _page_tabs(ob):
     if ob.type == "LIGHT":
         tabs[2] = ("OBJECT", "General", "")
         tabs += [("DETAILS", "Details", ""), ("SHADOW", "Shadow", "")]
-    return tabs
+    return tabs + _octane_tab()
+
+
+def _octane_tab():
+    return [("OCTANE", "Octane", "")] if OCTANE_PAGE and bpy.context.scene.render.engine == "octane" else []
 
 
 def _tab_items(self, context):
@@ -1033,7 +1038,7 @@ def page_light_shadow(col, ob):
     col.prop(d, "shadow_soft_size", text="Shadow Radius")
 
 
-PAGES = {"BASIC": page_basic, "COORD": page_coord, "OBJECT": page_object, "PHONG": page_phong, "UV": page_uv,
+PAGES = {"BASIC": page_basic, "COORD": page_coord, "OBJECT": page_object, "PHONG": page_phong, "UV": page_uv, "OCTANE": lambda col, ob: None,
          "DETAILS": page_light_details, "SHADOW": page_light_shadow}
 
 
@@ -1086,6 +1091,8 @@ class BLENDA4D_PT_attributes(roles.RolePanel, bpy.types.Panel):
             tab = "OBJECT" if "OBJECT" in tabs else tabs[min(2, len(tabs) - 1)]
         layout.separator(factor=0.5)
         page = kinds.KINDS[own]["pages"].get(tab) if own else None
+        if tab == "OCTANE" and OCTANE_PAGE:
+            page = OCTANE_PAGE[0]
         if page is None and ob.type == "CAMERA" and tab in CAMERA_PAGES:
             page = CAMERA_PAGES[tab]
         title = (kinds.KINDS[own]["titles"].get(tab) if own else None) or (
