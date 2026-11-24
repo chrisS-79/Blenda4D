@@ -11,7 +11,7 @@ from mathutils import Matrix, Vector
 from . import kinds
 from . import moclone_fx as fx
 
-MOGENS = ("cloner", "matrix")
+from .moclone_gens import FX_GENS as MOGENS      # generators with an Effectors list
 
 
 def _cloners():
@@ -51,6 +51,8 @@ def _props():
     O.b4d_fx_list = P.CollectionProperty(type=B4DFxEntry)
     O.b4d_fx_index = P.IntProperty()
     O.b4d_field_list = P.CollectionProperty(type=B4DFieldEntry)
+    for lst in ("b4d_fx_list_all", "b4d_fx_list_lines", "b4d_fx_list_words"):     # MoText's All, Lines and Words
+        setattr(O, lst, P.CollectionProperty(type=B4DFxEntry))
     O.b4d_field_index = P.IntProperty()
     pct = dict(subtype="PERCENTAGE", update=_live)
     O.b4d_fx_strength = P.FloatProperty(name="Strength", default=100.0, soft_min=0.0, soft_max=100.0, min=-1000.0, max=1000.0,
@@ -60,9 +62,11 @@ def _props():
     O.b4d_fx_pos_on = P.BoolProperty(name="Position", default=True, update=_live, description="Move the clones")
     O.b4d_fx_pos = P.FloatVectorProperty(name="P", size=3, default=(0.0, 50.0, 0.0), update=_live, description="How far to move them (cm)")
     O.b4d_fx_scale_on = P.BoolProperty(name="Scale", default=False, update=_live, description="Scale the clones")
-    O.b4d_fx_scale = P.FloatVectorProperty(name="S", size=3, default=(0.0, 0.0, 0.0), update=_live, description="How much to scale them (%: 100 = twice the size)")
+    O.b4d_fx_scale = P.FloatVectorProperty(name="S", size=3, default=(100.0, 100.0, 100.0), soft_min=0.0, soft_max=200.0, update=_live,
+                                           description="The clones' size in %: 100 is their own size, 0 makes them vanish, 200 doubles them")
     O.b4d_fx_uniform = P.BoolProperty(name="Uniform Scale", default=False, update=_live, description="One scale for all three axes")
-    O.b4d_fx_uscale = P.FloatProperty(name="Scale", default=0.0, update=_live, description="How much to scale them on all axes (%)")
+    O.b4d_fx_uscale = P.FloatProperty(name="Scale", default=100.0, soft_min=0.0, soft_max=200.0, update=_live,
+                                      description="The clones' size on all axes in %: 100 is their own size, 0 makes them vanish, 200 doubles them")
     O.b4d_fx_rot_on = P.BoolProperty(name="Rotation", default=False, update=_live, description="Turn the clones")
     O.b4d_fx_rot = P.FloatVectorProperty(name="R", size=3, default=(0.0, 0.0, 0.0), update=_live, description="How far to turn them (degrees)")
     O.b4d_fx_color_mode = P.EnumProperty(name="Color Mode", items=fx.COLOR_MODES, default="OFF", update=_live, description="How the effector colours the clones")
@@ -79,6 +83,34 @@ def _props():
     O.b4d_fx_target_mode = P.EnumProperty(name="Target Mode", items=fx.TARGET_MODES, default="OBJECT", update=_live)
     O.b4d_fx_target = P.PointerProperty(name="Target Object", type=bpy.types.Object, update=_restructure, description="The object the clones face")
     O.b4d_fx_delay_mode = P.EnumProperty(name="Mode", items=fx.DELAY_MODES, default="BLEND", update=_live)
+    O.b4d_fx_formula = P.StringProperty(name="Formula", default="sin((id/count+t)*360)", update=_restructure,
+                                        description="The value that scales the Parameter tab's change; sin, cos and tan work in degrees")
+    O.b4d_fx_freq = P.FloatProperty(name="f - Frequency", default=1.0, update=_live, description="The value of f in the formula")
+    O.b4d_fx_tscale = P.FloatProperty(name="t - Project Time", default=1.0, update=_live,
+                                      description="t in the formula is the time in seconds times this: more plays faster")
+    O.b4d_fx_push_mode = P.EnumProperty(name="Mode", items=fx.PUSH_MODES, default="PUSH", update=_live)
+    O.b4d_fx_radius = P.FloatProperty(name="Radius", default=50.0, min=0.0, update=_live,
+                                      description="Each clone's room (cm): clones closer than twice this overlap")
+    O.b4d_fx_iterations = P.IntProperty(name="Iterations", default=10, min=0, max=200, update=_live,
+                                        description="How many times to check again: more gives fewer overlaps and takes longer")
+    O.b4d_fx_volume = P.PointerProperty(name="Volume Object", type=bpy.types.Object, update=_restructure,
+                                        poll=lambda self, o: o.type in ("MESH", "CURVE", "SURFACE", "META", "FONT"),
+                                        description="Only the clones inside this closed object change")
+    O.b4d_fx_re_on = P.BoolVectorProperty(name="On", size=6, default=(True,) * 6, update=_live,
+                                          description="Take this part back from the effectors above and use this list's instead")
+    for key, label in RE_PARTS:
+        setattr(O, f"b4d_fx_ch_{key}", P.FloatProperty(name=label, default=100.0, min=-1000.0, max=1000.0, soft_min=0.0,
+                                                       soft_max=100.0, subtype="PERCENTAGE", update=_live,
+                                                       description=f"0%: the effectors above keep their {label.lower()}; 100%: this list's {label.lower()} replaces it"))
+        for a in (("RGB" if key == "color" else "XYZ") if key in ("pos", "scale", "rot", "color") else ""):
+            setattr(O, f"b4d_fx_ch_{key}_{a.lower()}", P.FloatProperty(name=f"{label}.{a} Strength", default=100.0, min=-1000.0, max=1000.0,
+                                                                         soft_min=0.0, soft_max=100.0, subtype="PERCENTAGE", update=_live))
+    O.b4d_fx_retime = P.BoolProperty(name="ReTime", default=False, update=_retime,
+                                     description="Play the keyframed animation of the effectors in the list between Start and End")
+    O.b4d_fx_retime_start = P.IntProperty(name="Start", default=0, update=_retime)
+    O.b4d_fx_retime_end = P.IntProperty(name="End", default=90, update=_retime)
+    from . import moclone_fx_more
+    moclone_fx_more.props()
     # fields
     O.b4d_fd_size = P.FloatVectorProperty(name="Size", size=3, default=(200.0, 200.0, 200.0), min=0.0, update=_live, description="The box's size (cm)")
     O.b4d_fd_radius = P.FloatProperty(name="Radius", default=100.0, min=0.0, update=_live, description="Radius (cm)")
@@ -95,6 +127,15 @@ def _props():
     O.b4d_fd_seed = P.IntProperty(name="Seed", default=0, min=0, update=_live)
 
 
+RE_PARTS = (("pos", "Position"), ("scale", "Scale"), ("rot", "Rotation"), ("color", "Color"), ("weight", "Weight"), ("vis", "Visibility"))
+
+
+def _retime(self, context):
+    from . import moclone_fx_more
+    moclone_fx_more.retime(self)
+
+
+FORMULA_VARS = ("id", "count", "t", "f", "falloff", "px", "py", "pz", "rx", "ry", "rz", "sx", "sy", "sz", "u", "v", "w")
 PROPS = ("b4d_fx_list", "b4d_fx_index", "b4d_field_list", "b4d_field_index")
 
 
@@ -103,7 +144,32 @@ PROPS = ("b4d_fx_list", "b4d_fx_index", "b4d_field_list", "b4d_field_index")
 DEFAULTS = {"fx_random": {"b4d_fx_pos": (50.0, 50.0, 50.0)},
             "fx_target": {"b4d_fx_pos_on": False},
             "fx_delay": {"b4d_fx_pos_on": False},
-            "fx_time": {"b4d_fx_pos_on": False, "b4d_fx_rot_on": True, "b4d_fx_rot": (0.0, 90.0, 0.0)}}
+            "fx_time": {"b4d_fx_pos_on": False, "b4d_fx_rot_on": True, "b4d_fx_rot": (0.0, 90.0, 0.0)},
+            "fx_inherit": {"b4d_fx_scale_on": True, "b4d_fx_rot_on": True},
+            "fx_spline": {"b4d_fx_rot_on": True}}
+
+
+SCALE_PCT = "b4d_fx_scale_pct"
+
+
+def _convert_scale():
+    """Effectors from 0.1.30 to 0.1.34 kept Scale as a change (0 = as it is, -100 = gone); it is now the clone's size
+    in % (100 = as it is, 0 = gone). A value that was set moves up by 100 once, so the clones look the same."""
+    for ob in bpy.data.objects:
+        if not fx.is_effector(ob) or ob.get(SCALE_PCT):
+            continue
+        if ob.is_property_set("b4d_fx_scale"):              # never set: it reads the new default, 100
+            ob.b4d_fx_scale = [c + 100.0 for c in ob.b4d_fx_scale]
+        if ob.is_property_set("b4d_fx_uscale"):
+            ob.b4d_fx_uscale = ob.b4d_fx_uscale + 100.0
+        ob[SCALE_PCT] = 1
+
+
+@bpy.app.handlers.persistent
+def _loaded(*_args):
+    _convert_scale()
+    from . import moclone_bake
+    moclone_bake.refresh_all()
 
 
 def create(context, k):
@@ -114,13 +180,16 @@ def create(context, k):
     ob.empty_display_type = "PLAIN_AXES"
     ob.empty_display_size = 0.15
     ob["b4d_type"] = k
+    ob[SCALE_PCT] = 1                                       # Scale is in % of the clone's size (see _convert_scale)
     context.collection.objects.link(ob)
     tidy_name(ob)
     for attr, v in DEFAULTS.get(k, {}).items():
         setattr(ob, attr, v)
+    if k == "fx_sound":                                     # one probe to start with: the low notes, as a spectrum
+        p = ob.b4d_fx_probes.add(); p.name = "Probe 1"
     if k in fx.EFFECTORS:
-        for g in [o for o in sel if o.get("b4d_type") in MOGENS]:            # a selected Cloner takes it at once
-            add_effector(g, ob)
+        for g in [o for o in sel if o.get("b4d_type") in MOGENS + fx.NESTS]:  # a selected Cloner (or Group) takes it at once
+            add_effector(g, ob, gen_list(g, context))
     else:
         for e in [o for o in sel if fx.is_effector(o)]:                     # a selected effector takes the field
             add_field(e, ob)
@@ -144,10 +213,11 @@ def create(context, k):
     return ob
 
 
-def add_effector(gen, eff):
-    if any(e.obj == eff for e in gen.b4d_fx_list):
+def add_effector(gen, eff, lst="b4d_fx_list"):
+    lst = getattr(gen, lst)
+    if gen == eff or any(e.obj == eff for e in lst):
         return
-    it = gen.b4d_fx_list.add()
+    it = lst.add()
     it.obj = eff
 
 
@@ -171,7 +241,7 @@ class BLENDA4D_OT_fx_remove(bpy.types.Operator):
         ob = bpy.data.objects.get(self.owner)
         if ob is None:
             return {"CANCELLED"}
-        lst = ob.b4d_fx_list if self.which == "fx" else ob.b4d_field_list
+        lst = _lst(ob, self.which)
         if 0 <= self.index < len(lst):
             lst.remove(self.index)
         _restructure(None, context)
@@ -192,7 +262,7 @@ class BLENDA4D_OT_fx_move(bpy.types.Operator):
         ob = bpy.data.objects.get(self.owner)
         if ob is None:
             return {"CANCELLED"}
-        lst = ob.b4d_fx_list if self.which == "fx" else ob.b4d_field_list
+        lst = _lst(ob, self.which)
         to = self.index + self.step
         if 0 <= self.index < len(lst) and 0 <= to < len(lst):
             lst.move(self.index, to)
@@ -238,8 +308,25 @@ class BLENDA4D_MT_field_add(bpy.types.Menu):
 
 # --- pages -----------------------------------------------------------------------------------------------------------
 
+TAB_LISTS = {"ALL": "b4d_fx_list_all", "LINES": "b4d_fx_list_lines", "WORDS": "b4d_fx_list_words", "LETTERS": "b4d_fx_list"}
+
+
+def _lst(ob, which):
+    """which: "fx", "field", or a list's own name (MoText's All, Lines, Words, Letters)."""
+    if which.startswith("b4d_"):
+        return getattr(ob, which)
+    return ob.b4d_fx_list if which == "fx" else ob.b4d_field_list
+
+
+def gen_list(gen, context):
+    """The Effectors list an effector made or dropped now joins: MoText's level shown on its page, else the list."""
+    if gen.get("b4d_type") == "motext":
+        return TAB_LISTS.get(getattr(context.window_manager, "b4d_am_tab", ""), "b4d_fx_list")
+    return "b4d_fx_list"
+
+
 def _list(col, ob, which):
-    lst = ob.b4d_fx_list if which == "fx" else ob.b4d_field_list
+    lst = _lst(ob, which)
     box = col.column(align=True)
     box.use_property_split = False                      # rows span the page: name on the left, strength on the right
     if not len(lst):
@@ -265,8 +352,8 @@ def _list(col, ob, which):
         r = row.operator("blenda4d.fx_remove", text="", icon="X", emboss=False)
         r.owner, r.which, r.index = ob.name, which, i
     col.separator()
-    col.menu("BLENDA4D_MT_fx_add" if which == "fx" else "BLENDA4D_MT_field_add",
-             text="Add Effector" if which == "fx" else "Add Field", icon="ADD")
+    col.menu("BLENDA4D_MT_field_add" if which == "field" else "BLENDA4D_MT_fx_add",
+             text="Add Field" if which == "field" else "Add Effector", icon="ADD")
 
 
 def page_cloner_effectors(col, ob):
@@ -278,8 +365,33 @@ def page_effector(col, ob):
     c = col.column()
     c.prop(ob, "b4d_fx_strength")
     c.prop(ob, "b4d_fx_use_sel", text="Selection")
-    if k != "fx_delay":
+    if k not in ("fx_delay", "fx_group", "fx_pushapart"):
         c.prop(ob, "b4d_fx_min"); c.prop(ob, "b4d_fx_max")
+    if k == "fx_group":
+        c.separator(); c.prop(ob, "b4d_fx_retime")
+        sub = c.column(align=True); sub.active = ob.b4d_fx_retime
+        sub.prop(ob, "b4d_fx_retime_start"); sub.prop(ob, "b4d_fx_retime_end")
+    if k in fx.NESTS:
+        c.separator(); c.label(text="Effectors")
+        _list(c, ob, "fx")
+    if k == "fx_formula":
+        c.separator(); c.prop(ob, "b4d_fx_formula")
+        from . import formula
+        bad = formula.check(ob.b4d_fx_formula, FORMULA_VARS)
+        if bad:
+            c.label(text=bad, icon="ERROR")
+        c.prop(ob, "b4d_fx_tscale"); c.prop(ob, "b4d_fx_freq")
+        box = c.column(align=True); box.scale_y = 0.8
+        for line in ("id: the clone's number, count: how many clones", "t: time in seconds, f: Frequency",
+                     "px py pz: position, rx ry rz: rotation, sx sy sz: scale", "u v: place across the arrangement, falloff: the fields' value"):
+            box.label(text=line)
+    elif k == "fx_pushapart":
+        c.separator(); c.prop(ob, "b4d_fx_push_mode", text="Mode"); c.prop(ob, "b4d_fx_radius"); c.prop(ob, "b4d_fx_iterations")
+    elif k == "fx_volume":
+        c.separator(); c.prop(ob, "b4d_fx_volume")
+    elif k in ("fx_spline", "fx_inherit", "fx_sound"):
+        from . import moclone_fx_more
+        moclone_fx_more.page(c, ob)
     if k == "fx_random":
         c.separator(); c.prop(ob, "b4d_fx_random_mode", text="Random Mode"); c.prop(ob, "b4d_fx_seed")
         if ob.b4d_fx_random_mode in ("NOISE", "TURBULENCE"):
@@ -301,6 +413,29 @@ def page_effector(col, ob):
 
 def page_parameter(col, ob):
     k = ob.get("b4d_type")
+    if k == "fx_reeffector":
+        c = col.column()
+        names = {"pos": "XYZ", "scale": "XYZ", "rot": "XYZ", "color": "RGB"}
+        for slot, (key, label) in enumerate(RE_PARTS):
+            r = c.row(align=True, heading=f"{label} Strength")
+            r.prop(ob, "b4d_fx_re_on", index=slot, text="")
+            sub = r.row(align=True); sub.active = ob.b4d_fx_re_on[slot]
+            sub.prop(ob, f"b4d_fx_ch_{key}", text="")
+            if key in names:
+                axes = c.column(align=True); axes.active = ob.b4d_fx_re_on[slot]
+                for a in names[key]:
+                    axes.prop(ob, f"b4d_fx_ch_{key}_{a.lower()}")
+            c.separator(factor=0.5)
+        return
+    if k == "fx_spline":
+        from . import moclone_fx_more
+        moclone_fx_more.page_parameter(col, ob)
+        return
+    if k == "fx_inherit":
+        c = col.column()
+        for n in ("b4d_fx_pos_on", "b4d_fx_scale_on", "b4d_fx_rot_on"):
+            c.prop(ob, n)
+        return
     if k == "fx_target":
         col.label(text="Target turns the clones; it has no other settings here", icon="INFO")
         col.prop(ob, "b4d_fx_visibility")
@@ -318,10 +453,10 @@ def page_parameter(col, ob):
     sub = c.column(align=True); sub.active = ob.b4d_fx_scale_on
     sub.prop(ob, "b4d_fx_uniform")
     if ob.b4d_fx_uniform:
-        sub.prop(ob, "b4d_fx_uscale", text="S")
+        sub.prop(ob, "b4d_fx_uscale", text="S %")
     else:
         for i, a in enumerate("XYZ"):
-            sub.prop(ob, "b4d_fx_scale", index=i, text=f"S . {a}")
+            sub.prop(ob, "b4d_fx_scale", index=i, text=f"S % . {a}")
     c.separator()
     c.prop(ob, "b4d_fx_rot_on")
     sub = c.column(align=True); sub.active = ob.b4d_fx_rot_on
@@ -387,11 +522,15 @@ def drop(context, objs, event):
                 gen.pop("b4d_dyn_sig", None)
                 over.tag_redraw()
             return took
-    if ob is not None and ob.get("b4d_type") in MOGENS and tab == "EFFECTORS":
+    if ob is not None and ob.get("b4d_type") in MOGENS and (tab == "EFFECTORS" or (ob.get("b4d_type") == "motext" and tab in TAB_LISTS)):
         for o in objs:
             if fx.is_effector(o):
+                add_effector(ob, o, gen_list(ob, context)); took = True
+    elif ob is not None and ob.get("b4d_type") in fx.NESTS and tab == "EFFECTOR":
+        for o in objs:
+            if fx.is_effector(o) and o != ob:
                 add_effector(ob, o); took = True
-    elif fx.is_effector(ob) and tab == "FIELDS":
+    elif (fx.is_effector(ob) or (ob is not None and ob.get("b4d_type") == "polyfx")) and tab == "FIELDS":
         for o in objs:
             if fx.is_field(o):
                 add_field(ob, o); took = True
@@ -476,6 +615,15 @@ def _shape(ob, scale=1.0):
     return []
 
 
+def field_outlines(context):
+    """For the viewport's click: each visible field and the lines of its shape (handles.py picks by them)."""
+    out = []
+    for o in context.view_layer.objects:
+        if fx.is_field(o) and o.visible_get():
+            out.append((o, _shape(o)))
+    return out
+
+
 def _draw():
     ctx = bpy.context
     try:
@@ -518,8 +666,13 @@ def register():
         if group in bars.GROUPS:
             bars.GROUPS[group][:] = []
     for k, (label, tip) in fx.EFFECTORS.items():
+        tabs = [("EFFECTOR", "Effector"), ("PARAMETER", "Parameter"), ("FIELDS", "Fields")]
+        if k == "fx_group":
+            tabs = tabs[:1]
+        elif k == "fx_pushapart":
+            tabs = tabs[:1]
         kinds.add(k, label, fx.ICONS[k], create=(lambda k: lambda context: create(context, k))(k),
-                  tabs=[("EFFECTOR", "Effector"), ("PARAMETER", "Parameter"), ("FIELDS", "Fields")],
+                  tabs=tabs,
                   pages={"EFFECTOR": page_effector, "PARAMETER": page_parameter, "FIELDS": page_fields},
                   titles={"EFFECTOR": label, "PARAMETER": "Parameter", "FIELDS": "Fields"},
                   describe=tip + " (a selected Cloner takes it into its Effectors list)")
@@ -534,10 +687,20 @@ def register():
         managers.OM_DROP.append(drop)
     if _handle is None:
         _handle = bpy.types.SpaceView3D.draw_handler_add(_draw, (), "WINDOW", "POST_VIEW")
+    from . import handles
+    handles.outlines(field_outlines)
+    if _loaded not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_loaded)
+    try:
+        _convert_scale()                                    # the file open while Blenda starts
+    except AttributeError:
+        pass
 
 
 def unregister():
     global _handle
+    if _loaded in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_loaded)
     if _handle is not None:
         bpy.types.SpaceView3D.draw_handler_remove(_handle, "WINDOW")
         _handle = None
@@ -549,3 +712,7 @@ def unregister():
             delattr(bpy.types.Object, n)
     for c in reversed(classes):
         bpy.utils.unregister_class(c)
+    from . import moclone_fx_more
+    for c in reversed(moclone_fx_more.classes):
+        if getattr(c, "is_registered", False):
+            bpy.utils.unregister_class(c)

@@ -22,7 +22,16 @@ EFFECTORS = {"fx_plain": ("Plain", "Moves, scales and turns clones, as strongly 
              "fx_step": ("Step", "Changes clones step by step, from none on the first clone to all on the last"),
              "fx_delay": ("Delay", "Makes clones follow the effectors above it with a lag, smoothly or springing"),
              "fx_target": ("Target", "Turns clones to face an object or the camera"),
-             "fx_time": ("Time", "Changes clones more and more as time goes on")}
+             "fx_time": ("Time", "Changes clones more and more as time goes on"),
+             "fx_formula": ("Formula", "Changes clones by a formula you type, from each clone's number, place and the time"),
+             "fx_inherit": ("Inheritance", "Moves clones to where another Cloner's clones are, or plays an object's animation on them"),
+             "fx_pushapart": ("Push Apart", "Moves, shrinks or hides clones so they don't overlap"),
+             "fx_reeffector": ("ReEffector", "Runs the effectors in its own list, as strongly as its fields say"),
+             "fx_sound": ("Sound", "Changes clones by a sound's loudness, each clone listening to its own pitch range"),
+             "fx_spline": ("Spline", "Moves clones onto a spline"),
+             "fx_volume": ("Volume", "Changes the clones inside an object"),
+             "fx_group": ("Group", "Runs the effectors in its own list together, so one Strength works on them all")}
+NESTS = ("fx_group", "fx_reeffector")                               # effectors that hold an Effectors list of their own
 FIELDS = {"fd_linear": ("Linear Field", "Full strength on one side, none on the other, in a ramp along its Z axis"),
           "fd_sphere": ("Spherical Field", "Full strength inside a sphere, fading to none at its surface"),
           "fd_box": ("Box Field", "Full strength inside a box, fading to none at its sides"),
@@ -34,6 +43,8 @@ FIELDS = {"fd_linear": ("Linear Field", "Full strength on one side, none on the 
           "fd_random": ("Random Field", "A random strength for each clone, or a noise pattern through space")}
 ICONS = {"fx_plain": "EMPTY_AXIS", "fx_random": "FORCE_TURBULENCE", "fx_shader": "TEXTURE", "fx_step": "IPO_CONSTANT",
          "fx_delay": "TIME", "fx_target": "TRACKER", "fx_time": "PREVIEW_RANGE",
+         "fx_formula": "DRIVER", "fx_inherit": "LINKED", "fx_pushapart": "FULLSCREEN_EXIT", "fx_reeffector": "LOOP_BACK",
+         "fx_sound": "SOUND", "fx_spline": "CURVE_BEZCURVE", "fx_volume": "MESH_ICOSPHERE", "fx_group": "GROUP",
          "fd_linear": "IPO_LINEAR", "fd_sphere": "SPHERE", "fd_box": "CUBE", "fd_cylinder": "MESH_CYLINDER", "fd_cone": "CONE",
          "fd_capsule": "MESH_CAPSULE", "fd_torus": "MESH_TORUS", "fd_radial": "MOD_SCREW", "fd_random": "FORCE_TURBULENCE"}
 COLOR_MODES = [("OFF", "Off", "Effector leaves the clone colours as they are", 0),
@@ -46,6 +57,12 @@ RANDOM_MODES = [("RANDOM", "Random", "A fixed random value for each clone", 0),
 DELAY_MODES = [("BLEND", "Blend", "Clones ease toward where the effectors above put them", 0),
                ("SPRING", "Spring", "Clones overshoot and spring back", 1)]
 TARGET_MODES = [("OBJECT", "Object", "Clones face the Target Object", 0), ("CAMERA", "Camera", "Clones face the scene camera", 1)]
+PUSH_MODES = [("HIDE", "Hide", "Hides clones that overlap ones earlier in the order; none move", 0),
+              ("PUSH", "Push Apart", "Moves clones away from each other until they don't overlap", 1),
+              ("SCALE", "Scale Apart", "Shrinks overlapping clones until they just touch", 2),
+              ("X", "Along X", "Pushes each clone only along its own X axis", 3),
+              ("Y", "Along Y", "Pushes each clone only along its own Y axis", 4),
+              ("Z", "Along Z", "Pushes each clone only along its own Z axis", 5)]
 SHADER_SOURCES = [("NOISE", "Noise", "A noise pattern", 0), ("IMAGE", "Image", "An image, laid over the clones by their U and V", 1)]
 AXES = [("XP", "+X", "", 0), ("XN", "-X", "", 1), ("YP", "+Y", "", 2), ("YN", "-Y", "", 3), ("ZP", "+Z", "", 4), ("ZN", "-Z", "", 5)]
 
@@ -58,8 +75,11 @@ def is_field(ob):
     return ob is not None and ob.get("b4d_type") in FIELDS
 
 
-def effectors_of(gen):
-    return [(i, e) for i, e in enumerate(getattr(gen, "b4d_fx_list", [])) if is_effector(e.obj)]
+LISTS = ("b4d_fx_list", "b4d_fx_list_all", "b4d_fx_list_lines", "b4d_fx_list_words")   # MoText: Letters, All, Lines, Words
+
+
+def effectors_of(gen, lst="b4d_fx_list"):
+    return [(i, e) for i, e in enumerate(getattr(gen, lst, [])) if is_effector(e.obj)]
 
 
 def fields_of(eff):
@@ -71,12 +91,43 @@ def signature(gen):
     out = [f"bare:{c.name}" for c in gen.children if not any(sl.material for sl in getattr(c, "material_slots", []))]
     from . import field_tags
     out += field_tags.clone_tag_signature(gen) + [f"sel:{getattr(e.obj, 'b4d_fx_use_sel', False)}" for _i, e in effectors_of(gen)]
-    for i, e in effectors_of(gen):
-        tgt, img = getattr(e.obj, "b4d_fx_target", None), getattr(e.obj, "b4d_fx_image", None)
-        out.append(f"{i}:{e.obj.name}:{e.obj['b4d_type']}:{tgt.name if tgt else ''}:{img.name if img else ''}")
-        for j, f in fields_of(e.obj):
-            out.append(f"  {j}:{f.obj.name}:{f.obj['b4d_type']}")
+    for lst in LISTS:
+        for i, e in effectors_of(gen, lst):
+            out += _sig_one(i, e.obj, lst[11:] + ":")
+    from . import moclone_gens
+    out += moclone_gens.extra_signature(gen)
     return out
+
+
+def _sig_one(i, ob, pad, depth=0):
+    tgt, img = getattr(ob, "b4d_fx_target", None), getattr(ob, "b4d_fx_image", None)
+    out = [f"{pad}{i}:{ob.name}:{ob['b4d_type']}:{tgt.name if tgt else ''}:{img.name if img else ''}:{_extra(ob)}"]
+    for j, f in fields_of(ob):
+        out.append(f"{pad}  {j}:{f.obj.name}:{f.obj['b4d_type']}")
+    if ob["b4d_type"] in NESTS and depth < 4:
+        for j, c in effectors_of(ob):
+            if c.obj != ob:
+                out += _sig_one(j, c.obj, pad + "    ", depth + 1)
+    return out
+
+
+def _extra(ob):
+    """What else shapes this effector's nodes: a typed formula, the objects it reads, a sound."""
+    k = ob["b4d_type"]
+    if k == "fx_formula":
+        return ob.b4d_fx_formula
+    if k in ("fx_volume", "fx_spline", "fx_inherit"):
+        o = getattr(ob, {"fx_volume": "b4d_fx_volume", "fx_spline": "b4d_fx_spline", "fx_inherit": "b4d_fx_inherit"}[k], None)
+        rail = getattr(ob, "b4d_fx_rail", None) if k == "fx_spline" else None
+        extra = ""
+        if k == "fx_inherit":
+            from . import moclone_bake
+            extra = moclone_bake.motion_key(ob)
+        return f"{o.name if o else ''}:{rail.name if rail else ''}:{extra}"
+    if k == "fx_sound":
+        from . import moclone_bake
+        return moclone_bake.sound_key(ob)
+    return ""
 
 
 # --- drivers ---------------------------------------------------------------------------------------------------------
@@ -250,12 +301,13 @@ def falloff(nodes, links, eff):
 # --- effectors ----------------------------------------------------------------------------------------------------
 
 def _params(nodes, links, e):
-    """The Parameter tab: position (cm), scale (fraction, 0 = no change), rotation (radians), as Blender vectors."""
+    """The Parameter tab: position (cm), scale, rotation (radians), as Blender vectors. Scale is set as a percentage of
+    the clone's own size (100 = as it is, 0 = gone, 200 = twice); here it becomes the change from 100 (0 = none)."""
     pos = gc.vmath(nodes, links, "SCALE", _vec(nodes, links, e, "b4d_fx_pos", "var*0.01"), scale=_driven(nodes, e, "b4d_fx_pos_on"))
     uni = _driven(nodes, e, "b4d_fx_uniform")
-    us = _driven(nodes, e, "b4d_fx_uscale", "var*0.01")
+    us = _driven(nodes, e, "b4d_fx_uscale", "(var-100)*0.01")
     sc = gc.switch(nodes, links, "VECTOR", _math(nodes, "GREATER_THAN", uni, 0.5, links),
-                   _vec(nodes, links, e, "b4d_fx_scale", "var*0.01"), gc.combine(nodes, links, us, us, us))
+                   _vec(nodes, links, e, "b4d_fx_scale", "(var-100)*0.01"), gc.combine(nodes, links, us, us, us))
     sc = gc.vmath(nodes, links, "SCALE", sc, scale=_driven(nodes, e, "b4d_fx_scale_on"))
     rot = gc.vmath(nodes, links, "SCALE", _vec(nodes, links, e, "b4d_fx_rot", f"var*{math.pi / 180.0!r}"), scale=_driven(nodes, e, "b4d_fx_rot_on"))
     return pos, sc, rot
@@ -268,6 +320,7 @@ def _apply_transform(nodes, links, geo, w, pos, sc, rot):
     sp = nodes.new("GeometryNodeSetPosition"); links.new(geo, sp.inputs["Geometry"]); links.new(rv.outputs[0], sp.inputs["Offset"])
     geo = sp.outputs["Geometry"]
     grow = gc.vmath(nodes, links, "ADD", gc.combine(nodes, links, 1.0, 1.0, 1.0), gc.vmath(nodes, links, "SCALE", sc, scale=w))
+    grow = gc.vmath(nodes, links, "MAXIMUM", grow, (0.0, 0.0, 0.0))     # a clone shrinks to nothing, never inside out
     geo = _store(nodes, links, geo, "b4d_scale", "FLOAT_VECTOR", gc.vmath(nodes, links, "MULTIPLY", _attr(nodes, "b4d_scale", "FLOAT_VECTOR"), grow))
     rr = nodes.new("FunctionNodeRotateRotation"); rr.rotation_space = "LOCAL"
     links.new(q, rr.inputs["Rotation"]); links.new(_euler(nodes, links, gc.vmath(nodes, links, "SCALE", rot, scale=w)), rr.inputs["Rotate By"])
@@ -294,14 +347,14 @@ def _apply_visibility(nodes, links, geo, e, w):
     return _store(nodes, links, geo, "b4d_hidden", "FLOAT", _math(nodes, "MAXIMUM", prev, hide, links))
 
 
-def _weight(nodes, links, gen, i, e):
+def _weight(nodes, links, gen, i, e, lst="b4d_fx_list"):
     """Strength x the list's own strength and switch x (Minimum..Maximum over the fields' value)."""
     fall = falloff(nodes, links, e)
     lo = _driven(nodes, e, "b4d_fx_min", "var*0.01")
     hi = _driven(nodes, e, "b4d_fx_max", "var*0.01")
     v = hi if fall is None else _math(nodes, "ADD", lo, _math(nodes, "MULTIPLY", _math(nodes, "SUBTRACT", hi, lo, links), fall, links), links)
     s = _math(nodes, "MULTIPLY", _driven(nodes, e, "b4d_fx_strength", "var*0.01"),
-              _math(nodes, "MULTIPLY", _driven(nodes, gen, f"b4d_fx_list[{i}].strength", "var*0.01"), _driven(nodes, gen, f"b4d_fx_list[{i}].on"), links), links)
+              _math(nodes, "MULTIPLY", _driven(nodes, gen, f"{lst}[{i}].strength", "var*0.01"), _driven(nodes, gen, f"{lst}[{i}].on"), links), links)
     return _math(nodes, "MULTIPLY", v, s, links)
 
 
@@ -434,28 +487,325 @@ def _delay(nodes, links, geo, gen, i, e, w):
     return sim_out.outputs["Geometry"]
 
 
+def _vlen(nodes, links, v):
+    n = nodes.new("ShaderNodeVectorMath"); n.operation = "LENGTH"; links.new(v, n.inputs[0])
+    return n.outputs["Value"]
+
+
+def _vdist(nodes, links, a, b):
+    n = nodes.new("ShaderNodeVectorMath"); n.operation = "DISTANCE"; links.new(a, n.inputs[0]); links.new(b, n.inputs[1])
+    return n.outputs["Value"]
+
+
+def _count(nodes, links, geo):
+    """How many clones: points of a point cloud, or of curves (MoSpline)."""
+    total = 0.0
+    for comp in ("POINTCLOUD", "CURVE"):
+        n = nodes.new("GeometryNodeAttributeDomainSize"); n.component = comp
+        links.new(geo, n.inputs["Geometry"])
+        total = _math(nodes, "ADD", total, n.outputs["Point Count"], links)
+    return total
+
+
+def _formula(nodes, links, geo, gen, i, e, w):
+    """The typed formula's value (sin(...) runs -1..1) scales the Parameter tab's change, as Shader's brightness does."""
+    from . import formula
+    p = gc.separate(nodes, links, gc.vmath(nodes, links, "SCALE", gc.position(nodes), scale=100.0))
+    eul = nodes.new("FunctionNodeRotationToEuler"); links.new(_attr(nodes, "b4d_rot_q", "QUATERNION"), eul.inputs[0])
+    r = gc.separate(nodes, links, gc.vmath(nodes, links, "SCALE", eul.outputs[0], scale=180.0 / math.pi))
+    sc = gc.separate(nodes, links, _attr(nodes, "b4d_scale", "FLOAT_VECTOR"))
+    uv = gc.separate(nodes, links, _attr(nodes, "b4d_uv", "FLOAT_VECTOR"))
+    fall = falloff(nodes, links, e)
+    var = {"id": _attr(nodes, "b4d_index", "INT"), "count": _count(nodes, links, geo),
+           "t": _math(nodes, "MULTIPLY", nodes.new("GeometryNodeInputSceneTime").outputs["Seconds"], _driven(nodes, e, "b4d_fx_tscale"), links),
+           "f": _driven(nodes, e, "b4d_fx_freq"),
+           "falloff": 1.0 if fall is None else fall,
+           "px": p["X"], "py": p["Z"], "pz": p["Y"], "rx": r["X"], "ry": r["Z"], "rz": r["Y"],
+           "sx": sc["X"], "sy": sc["Z"], "sz": sc["Y"], "u": uv["X"], "v": uv["Y"], "w": 0.0}
+    value = formula.build(nodes, links, e.b4d_fx_formula, var)
+    if not hasattr(value, "is_output"):
+        value = _math(nodes, "ADD", value, 0.0, links)
+    pos, sc_, rot = _params(nodes, links, e)
+    geo = _apply_transform(nodes, links, geo, _math(nodes, "MULTIPLY", w, value, links), pos, sc_, rot)
+    geo = _apply_color(nodes, links, geo, e, _math(nodes, "MULTIPLY", w, value, links))
+    return _apply_visibility(nodes, links, geo, e, w)
+
+
+def _volume(nodes, links, geo, gen, i, e, w):
+    """Works only on the clones inside the Volume Object: a ray from the clone leaves through the inside of a face."""
+    vol = e.b4d_fx_volume
+    if vol is None or vol.type not in ("MESH", "CURVE", "SURFACE", "META", "FONT"):
+        inside = 0.0
+    else:
+        info = nodes.new("GeometryNodeObjectInfo"); info.transform_space = "RELATIVE"
+        info.inputs["Object"].default_value = vol
+        real = nodes.new("GeometryNodeRealizeInstances"); links.new(info.outputs["Geometry"], real.inputs["Geometry"])
+        votes = 0.0
+        for d in ((0.0, 0.0, 1.0), (0.577, 0.577, -0.577), (-0.707, 0.0, -0.707)):     # three rays outvote a seam
+            ray = nodes.new("GeometryNodeRaycast")
+            links.new(real.outputs["Geometry"], ray.inputs["Target Geometry"])
+            ray.inputs["Ray Direction"].default_value = d
+            ray.inputs["Ray Length"].default_value = 1e5
+            facing = _math(nodes, "GREATER_THAN", gc.dot(nodes, links, ray.outputs["Hit Normal"], d), 0.0, links)
+            votes = _math(nodes, "ADD", votes, _math(nodes, "MULTIPLY", ray.outputs["Is Hit"], facing, links), links)
+        inside = _math(nodes, "GREATER_THAN", votes, 1.5, links)
+    return _plain(nodes, links, geo, gen, i, e, _math(nodes, "MULTIPLY", w, inside, links))
+
+
+def _push_apart(nodes, links, geo, gen, i, e, w):
+    """Each clone has a sphere of Radius x its size. Hide: a clone whose sphere overlaps an earlier kept clone's goes.
+    Push Apart: overlapping neighbours step apart, a little more each Iteration (Along X/Y/Z: only along the clone's own
+    axis). Scale Apart: overlapping clones shrink until they just touch."""
+    mode = _driven(nodes, e, "b4d_fx_push_mode")
+    is_mode = lambda m: _math(nodes, "COMPARE", mode, float(m), links)
+    pushing = _math(nodes, "GREATER_THAN", _math(nodes, "ADD", is_mode(1), _math(nodes, "GREATER_THAN", mode, 2.5, links), links), 0.5, links)
+    ww = _clamp(nodes, links, w)
+    idx = nodes.new("GeometryNodeInputIndex").outputs[0]
+    R = _math(nodes, "MAXIMUM", _driven(nodes, e, "b4d_fx_radius", "var*0.01"), 1e-5, links)
+    size = lambda field: _math(nodes, "MAXIMUM", _math(nodes, "MAXIMUM", gc.separate(nodes, links, field)["X"], gc.separate(nodes, links, field)["Y"], links),
+                               gc.separate(nodes, links, field)["Z"], links)
+    own_r = _math(nodes, "MULTIPLY", R, size(_attr(nodes, "b4d_scale", "FLOAT_VECTOR")), links)
+
+    def sample(g, field, typ, index):
+        s = nodes.new("GeometryNodeSampleIndex"); s.data_type = typ; s.domain = "POINT"
+        links.new(g, s.inputs["Geometry"]); links.new(field, s.inputs["Value"]); links.new(index, s.inputs["Index"])
+        return s.outputs[0]
+
+    def nearest(g, group=None):
+        n = nodes.new("GeometryNodeIndexOfNearest"); links.new(gc.position(nodes), n.inputs["Position"])
+        if group is not None:
+            links.new(group, n.inputs["Group ID"])
+        ni = n.outputs["Index"]
+        gap = _math(nodes, "ADD", own_r, _math(nodes, "MULTIPLY", R, size(sample(g, _attr(nodes, "b4d_scale", "FLOAT_VECTOR"), "FLOAT_VECTOR", ni)), links), links)
+        return ni, n.outputs["Has Neighbor"], sample(g, gc.position(nodes), "FLOAT_VECTOR", ni), gap
+
+    iters = _driven(nodes, e, "b4d_fx_iterations")
+    # Push Apart / Along X, Y, Z
+    rin = nodes.new("GeometryNodeRepeatInput"); rout = nodes.new("GeometryNodeRepeatOutput"); rin.pair_with_output(rout)
+    links.new(_math(nodes, "MULTIPLY", iters, pushing, links), rin.inputs["Iterations"])
+    links.new(geo, rin.inputs["Geometry"])
+    g = rin.outputs["Geometry"]
+    # every clone is pushed by its nearest neighbour in each of four groups (number mod 4), so a crowd spreads evenly
+    # instead of pairs trading places
+    K = 4
+    cls = _math(nodes, "FLOORED_MODULO", idx, float(K), links)
+    jitter = gc.combine(nodes, links, *[_rand(nodes, links, -1e-4, 1e-4, idx, k) for k in (3, 5, 7)])
+    q = _attr(nodes, "b4d_rot_q", "QUATERNION")
+    axis = nodes.new("FunctionNodeRotateVector"); links.new(q, axis.inputs["Rotation"])
+    links.new(gc.index_switch(nodes, links, "VECTOR", _math(nodes, "MAXIMUM", _math(nodes, "SUBTRACT", mode, 3.0, links), 0.0, links),
+                              [(1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, 1.0, 0.0)]), axis.inputs["Vector"])
+    same_i, same_has, same_pos, same_gap = nearest(g, cls)               # nearest other clone in its own group
+    step = (0.0, 0.0, 0.0)
+    for c in range(K):
+        part = nodes.new("GeometryNodeSeparateGeometry"); part.domain = "POINT"
+        links.new(g, part.inputs["Geometry"]); links.new(_math(nodes, "COMPARE", cls, float(c), links), part.inputs["Selection"])
+        sn = nodes.new("GeometryNodeSampleNearest"); sn.domain = "POINT"; links.new(part.outputs["Selection"], sn.inputs["Geometry"])
+        opos = sample(part.outputs["Selection"], gc.position(nodes), "FLOAT_VECTOR", sn.outputs["Index"])
+        ogap = _math(nodes, "ADD", own_r, _math(nodes, "MULTIPLY", R, size(sample(part.outputs["Selection"], _attr(nodes, "b4d_scale", "FLOAT_VECTOR"), "FLOAT_VECTOR", sn.outputs["Index"])), links), links)
+        n_in = nodes.new("GeometryNodeAttributeDomainSize"); n_in.component = "POINTCLOUD"; links.new(part.outputs["Selection"], n_in.inputs["Geometry"])
+        mine = _math(nodes, "COMPARE", cls, float(c), links)
+        npos = gc.switch(nodes, links, "VECTOR", mine, opos, same_pos)
+        gap = gc.switch(nodes, links, "FLOAT", mine, ogap, same_gap)
+        has = gc.switch(nodes, links, "FLOAT", mine, _math(nodes, "GREATER_THAN", n_in.outputs["Point Count"], 0.0, links), same_has)
+        away = gc.vmath(nodes, links, "ADD", gc.vmath(nodes, links, "SUBTRACT", gc.position(nodes), npos), jitter)   # two on one spot still part
+        over = _math(nodes, "MULTIPLY", _math(nodes, "MAXIMUM", _math(nodes, "SUBTRACT", gap, _vlen(nodes, links, away), links), 0.0, links), has, links)
+        free = gc.vmath(nodes, links, "NORMALIZE", away)
+        # Along an axis: the clone's own X, Y or Z (shown Y = Blender Z), toward the side the neighbour isn't
+        side = _math(nodes, "SIGN", gc.dot(nodes, links, away, axis.outputs[0]), None, links)
+        side = gc.switch(nodes, links, "FLOAT", _math(nodes, "COMPARE", side, 0.0, links), side, 1.0)
+        dirn = gc.switch(nodes, links, "VECTOR", _math(nodes, "GREATER_THAN", mode, 2.5, links), free, gc.vmath(nodes, links, "SCALE", axis.outputs[0], scale=side))
+        step = gc.vmath(nodes, links, "ADD", step, gc.vmath(nodes, links, "SCALE", dirn, scale=_math(nodes, "MULTIPLY", over, _math(nodes, "MULTIPLY", ww, 0.5, links), links)))
+    sp = nodes.new("GeometryNodeSetPosition"); links.new(g, sp.inputs["Geometry"]); links.new(step, sp.inputs["Offset"])
+    links.new(sp.outputs["Geometry"], rout.inputs["Geometry"])
+    geo = rout.outputs["Geometry"]
+    # Scale Apart: shrink so the spheres just touch
+    _ni, has, npos, gap = nearest(geo)
+    room = _clamp(nodes, links, _math(nodes, "DIVIDE", _vdist(nodes, links, gc.position(nodes), npos), _math(nodes, "MAXIMUM", gap, 1e-6, links), links))
+    room = gc.switch(nodes, links, "FLOAT", has, 1.0, room)
+    f = _math(nodes, "MULTIPLY", ww, is_mode(2), links)
+    shrink = _math(nodes, "ADD", 1.0, _math(nodes, "MULTIPLY", f, _math(nodes, "SUBTRACT", room, 1.0, links), links), links)
+    geo = _store(nodes, links, geo, "b4d_scale", "FLOAT_VECTOR", gc.vmath(nodes, links, "SCALE", _attr(nodes, "b4d_scale", "FLOAT_VECTOR"), scale=shrink))
+    # Hide: clone by clone in order, a clone whose sphere overlaps one already kept is hidden (state 0 undecided,
+    # 1 kept, 2 hidden). One pass per clone: exact, the same on every computer.
+    hin = nodes.new("GeometryNodeRepeatInput"); hout = nodes.new("GeometryNodeRepeatOutput"); hin.pair_with_output(hout)
+    on = _math(nodes, "GREATER_THAN", _driven(nodes, e, "b4d_fx_strength"), 0.0, links)     # one value: a pass count can't vary per clone
+    links.new(_math(nodes, "MULTIPLY", _count(nodes, links, geo), _math(nodes, "MULTIPLY", is_mode(0), on, links), links), hin.inputs["Iterations"])
+    geo = _store(nodes, links, geo, "b4d_push_st", "INT", _math(nodes, "MULTIPLY", idx, 0.0, links))
+    links.new(geo, hin.inputs["Geometry"])
+    g = hin.outputs["Geometry"]
+    k = hin.outputs["Iteration"]
+    kept = nodes.new("GeometryNodeSeparateGeometry"); kept.domain = "POINT"
+    links.new(g, kept.inputs["Geometry"]); links.new(_math(nodes, "COMPARE", _attr(nodes, "b4d_push_st", "INT"), 1.0, links), kept.inputs["Selection"])
+    kg = kept.outputs["Selection"]
+    here = sample(g, gc.position(nodes), "FLOAT_VECTOR", k)
+    my_r = _math(nodes, "MULTIPLY", R, size(sample(g, _attr(nodes, "b4d_scale", "FLOAT_VECTOR"), "FLOAT_VECTOR", k)), links)
+    near = nodes.new("GeometryNodeSampleNearest"); near.domain = "POINT"; links.new(kg, near.inputs["Geometry"]); links.new(here, near.inputs["Sample Position"])
+    kpos = sample(kg, gc.position(nodes), "FLOAT_VECTOR", near.outputs["Index"])
+    kgap = _math(nodes, "ADD", my_r, _math(nodes, "MULTIPLY", R, size(sample(kg, _attr(nodes, "b4d_scale", "FLOAT_VECTOR"), "FLOAT_VECTOR", near.outputs["Index"])), links), links)
+    cnt = nodes.new("GeometryNodeAttributeDomainSize"); cnt.component = "POINTCLOUD"; links.new(kg, cnt.inputs["Geometry"])
+    hit = _math(nodes, "MULTIPLY", _math(nodes, "LESS_THAN", _vdist(nodes, links, here, kpos), kgap, links),
+                _math(nodes, "GREATER_THAN", cnt.outputs["Point Count"], 0.0, links), links)
+    st = nodes.new("GeometryNodeStoreNamedAttribute"); st.data_type = "INT"; st.domain = "POINT"
+    links.new(g, st.inputs["Geometry"]); st.inputs["Name"].default_value = "b4d_push_st"
+    links.new(_math(nodes, "COMPARE", idx, k, links), st.inputs["Selection"])
+    links.new(_math(nodes, "ADD", 1.0, hit, links), st.inputs["Value"])
+    links.new(st.outputs["Geometry"], hout.inputs["Geometry"])
+    geo = hout.outputs["Geometry"]
+    gone = _math(nodes, "COMPARE", _attr(nodes, "b4d_push_st", "INT"), 2.0, links)
+    geo = _store(nodes, links, geo, "b4d_hidden", "FLOAT", _math(nodes, "MAXIMUM", _attr(nodes, "b4d_hidden", "FLOAT"), gone, links))
+    for name in ("b4d_push_st",):
+        rm = nodes.new("GeometryNodeRemoveAttribute"); links.new(geo, rm.inputs["Geometry"]); rm.inputs["Name"].default_value = name
+        geo = rm.outputs["Geometry"]
+    return geo
+
+
+def _nested(nodes, links, geo, gen, e, w, depth):
+    """The effectors in a Group's or ReEffector's own list, each as strong as its own settings x w."""
+    for j, entry in effectors_of(e):
+        c = entry.obj
+        if c == e or depth > 4:
+            continue
+        cw = _math(nodes, "MULTIPLY", _weight(nodes, links, e, j, c), w, links)
+        geo = apply_one(nodes, links, geo, gen, j, c, cw, depth + 1)
+    return geo
+
+
+def _group(nodes, links, geo, gen, i, e, w, depth=0):
+    return _nested(nodes, links, geo, gen, e, w, depth)
+
+
+BASE = (("position", "b4d_base_p", "FLOAT_VECTOR"), ("b4d_scale", "b4d_base_s", "FLOAT_VECTOR"), ("b4d_rot_q", "b4d_base_r", "QUATERNION"),
+        ("b4d_color", "b4d_base_c", "FLOAT_COLOR"), ("b4d_weight", "b4d_base_w", "FLOAT"), ("b4d_hidden", "b4d_base_h", "FLOAT"))
+
+
+def _has_reeffector(owner, depth=0, lst="b4d_fx_list"):
+    for _j, entry in effectors_of(owner, lst):
+        if entry.obj["b4d_type"] == "fx_reeffector" or (entry.obj["b4d_type"] in NESTS and depth < 4 and entry.obj != owner
+                                                         and _has_reeffector(entry.obj, depth + 1)):
+            return True
+    return False
+
+
+def keep_base(nodes, links, geo):
+    """The clones' state before any effector, for a ReEffector to start its own effectors from."""
+    for name, base, typ in BASE:
+        geo = _store(nodes, links, geo, base, typ, gc.position(nodes) if name == "position" else _attr(nodes, name, typ))
+    return geo
+
+
+def _reeffector(nodes, links, geo, gen, i, e, w, depth=0):
+    """Inside its fields, each switched-on part (Position, Scale, Rotation, Color, Weight, Visibility) of the effectors
+    above it is taken back and its own effectors' result, started from the clones' first state, put in instead; the
+    part's Strength blends between the two."""
+    start = nodes.new("GeometryNodeSetPosition"); links.new(geo, start.inputs["Geometry"]); links.new(_attr(nodes, "b4d_base_p", "FLOAT_VECTOR"), start.inputs["Position"])
+    b = start.outputs["Geometry"]
+    for name, base, typ in BASE[1:]:
+        b = _store(nodes, links, b, name, typ, _attr(nodes, base, typ))
+    own = _nested(nodes, links, b, gen, e, 1.0, depth)
+    idx = nodes.new("GeometryNodeInputIndex").outputs[0]
+
+    def theirs(field, typ):
+        s = nodes.new("GeometryNodeSampleIndex"); s.data_type = typ; s.domain = "POINT"
+        links.new(own, s.inputs["Geometry"]); links.new(field, s.inputs["Value"]); links.new(idx, s.inputs["Index"])
+        return s.outputs[0]
+
+    ww = _clamp(nodes, links, w, -10.0, 10.0)
+
+    def amount(key, slot, axes=False):
+        f = _math(nodes, "MULTIPLY", ww, _math(nodes, "MULTIPLY", _driven(nodes, e, f"b4d_fx_re_on[{slot}]"), _driven(nodes, e, f"b4d_fx_ch_{key}", "var*0.01"), links), links)
+        if not axes:
+            return f
+        a = [_driven(nodes, e, f"b4d_fx_ch_{key}_{ch}", "var*0.01") for ch in ("rgb" if key == "color" else "xyz")]
+        if key in ("pos", "scale", "rot"):
+            a = [a[0], a[2], a[1]]                                   # shown X, Y, Z -> Blender X, Y (shown Z), Z (shown Y)
+        return gc.vmath(nodes, links, "SCALE", gc.combine(nodes, links, *a), scale=f)
+
+    def vmix(f, a, b_):
+        m = nodes.new("ShaderNodeMix"); m.data_type = "VECTOR"; m.factor_mode = "NON_UNIFORM"
+        links.new(f, m.inputs[1]); links.new(a, m.inputs[4]); links.new(b_, m.inputs[5])
+        return m.outputs[1]
+
+    sp = nodes.new("GeometryNodeSetPosition"); links.new(geo, sp.inputs["Geometry"])
+    links.new(vmix(amount("pos", 0, True), gc.position(nodes), theirs(gc.position(nodes), "FLOAT_VECTOR")), sp.inputs["Position"])
+    geo = sp.outputs["Geometry"]
+    sc = _attr(nodes, "b4d_scale", "FLOAT_VECTOR")
+    geo = _store(nodes, links, geo, "b4d_scale", "FLOAT_VECTOR", vmix(amount("scale", 1, True), sc, theirs(sc, "FLOAT_VECTOR")))
+    q = _attr(nodes, "b4d_rot_q", "QUATERNION")
+    e1 = nodes.new("FunctionNodeRotationToEuler"); links.new(q, e1.inputs[0])
+    e2 = nodes.new("FunctionNodeRotationToEuler"); links.new(theirs(q, "QUATERNION"), e2.inputs[0])
+    geo = _store(nodes, links, geo, "b4d_rot_q", "QUATERNION", _euler(nodes, links, vmix(amount("rot", 2, True), e1.outputs[0], e2.outputs[0])))
+    col = _attr(nodes, "b4d_color", "FLOAT_COLOR")
+    cv = vmix(amount("color", 3, True), col, theirs(col, "FLOAT_COLOR"))
+    cc = gc.separate(nodes, links, cv); cc_n = nodes.new("FunctionNodeCombineColor")
+    for k, ch in enumerate(("X", "Y", "Z")):
+        links.new(cc[ch], cc_n.inputs[k])
+    cc_n.inputs["Alpha"].default_value = 1.0
+    geo = _store(nodes, links, geo, "b4d_color", "FLOAT_COLOR", cc_n.outputs[0])
+    for key, slot, name in (("weight", 4, "b4d_weight"), ("vis", 5, "b4d_hidden")):
+        v = _attr(nodes, name, "FLOAT")
+        geo = _store(nodes, links, geo, name, "FLOAT", _mix(nodes, links, "FLOAT", _clamp(nodes, links, amount(key, slot)), v, theirs(v, "FLOAT")))
+    return geo
+
+
+def _spline(nodes, links, geo, gen, i, e, w):
+    from . import moclone_fx_more
+    return moclone_fx_more.spline(nodes, links, geo, gen, i, e, w)
+
+
+def _inherit(nodes, links, geo, gen, i, e, w):
+    from . import moclone_fx_more
+    return moclone_fx_more.inherit(nodes, links, geo, gen, i, e, w)
+
+
+def _sound(nodes, links, geo, gen, i, e, w):
+    from . import moclone_fx_more
+    return moclone_fx_more.sound(nodes, links, geo, gen, i, e, w)
+
+
 APPLY = {"fx_plain": _plain, "fx_random": _random, "fx_shader": _shader, "fx_step": _step, "fx_delay": _delay,
-         "fx_target": _target, "fx_time": _time}
+         "fx_target": _target, "fx_time": _time, "fx_formula": _formula, "fx_volume": _volume, "fx_pushapart": _push_apart,
+         "fx_spline": _spline, "fx_inherit": _inherit, "fx_sound": _sound}
 
 
-def effect_fn(gen):
-    """geo -> geo through the Cloner's effectors in list order; hidden clones go at the end."""
+def apply_one(nodes, links, geo, gen, i, e, w, depth=0):
+    """One effector. Its strength per clone is read once, where the clone is before it moves: the fields would
+    otherwise be read again after the move, and a clone pushed out of a field would lose the rest of the effect."""
+    k = e["b4d_type"]
+    if hasattr(w, "is_output"):
+        name = f"b4d_w{depth}"
+        geo = _store(nodes, links, geo, name, "FLOAT", w)
+        w = _attr(nodes, name, "FLOAT")
+    if k == "fx_group":
+        return _group(nodes, links, geo, gen, i, e, w, depth)
+    if k == "fx_reeffector":
+        return _reeffector(nodes, links, geo, gen, i, e, w, depth)
+    return APPLY[k](nodes, links, geo, gen, i, e, w)
+
+
+
+def effect_fn(gen, lst="b4d_fx_list", drop_hidden=True):
+    """geo -> geo through the Cloner's effectors in list order; hidden clones go at the end (drop_hidden False: they
+    keep b4d_hidden = 1, for generators that hide pieces themselves)."""
     def effect(nodes, links, geo):
-        items = effectors_of(gen)
+        items = effectors_of(gen, lst)
         from . import field_tags
         geo = field_tags.clone_tags(nodes, links, gen, geo)            # MoClone Weightmap and Selection
         if not items:
             return geo
         geo = _store(nodes, links, geo, "b4d_hidden", "FLOAT", nodes.new("ShaderNodeValue").outputs[0])
+        if _has_reeffector(gen, 0, lst):
+            geo = keep_base(nodes, links, geo)
         for i, entry in items:
             e = entry.obj
-            w = _weight(nodes, links, gen, i, e)
+            w = _weight(nodes, links, gen, i, e, lst)
             from . import field_tags
             if field_tags.has(gen, "MG_WEIGHT"):                       # each clone's weight scales the effector
                 w = _math(nodes, "MULTIPLY", w, _attr(nodes, "b4d_weight", "FLOAT"), links)
             if field_tags.has(gen, "MG_SEL") and e.b4d_fx_use_sel:     # Selection: only the selected clones
                 w = _math(nodes, "MULTIPLY", w, _attr(nodes, "b4d_sel", "FLOAT"), links)
-            geo = APPLY[e["b4d_type"]](nodes, links, geo, gen, i, e, w)
+            geo = apply_one(nodes, links, geo, gen, i, e, w)
+        if not drop_hidden:
+            return geo
         drop = nodes.new("GeometryNodeDeleteGeometry"); drop.domain = "POINT"
         links.new(geo, drop.inputs["Geometry"]); links.new(_math(nodes, "GREATER_THAN", _attr(nodes, "b4d_hidden", "FLOAT"), 0.5, links), drop.inputs["Selection"])
         return drop.outputs["Geometry"]

@@ -96,6 +96,13 @@ def _start():
             put_on()
             from . import camview
             camview._loaded("")
+        elif not bpy.data.filepath:
+            # changed before Blenda had started: what differs from Blender's own defaults is a change to remember
+            for scene in bpy.data.scenes:
+                base = render_settings.defaults(scene)
+                for k, v in values(scene).items():
+                    if k in base and base[k] != v:
+                        remember.put(FILE, k, v)
     except AttributeError:
         return 0.2
     if not bpy.app.timers.is_registered(_tick):

@@ -122,6 +122,23 @@ def _label(entry):
     return f"{entry[3]} ({entry[4]})" if entry[4] else entry[3]
 
 
+def item(context, e, active_tool):
+    """One button of the column: a tool, or a group of them (the one last used shows; hold for the rest)."""
+    members = e if isinstance(e, list) else [e]
+    key = members[0][1]
+    pick = next((m for m in members if m[1] == active_tool), None)
+    if pick is not None:
+        _shown[key] = pick[1]
+    pick = next((m for m in members if m[1] == _shown.get(key)), members[0])
+    why = why_not(context, pick)
+    return {"tool": pick[1] if pick[0] == _T else None, "icon": pick[2] if pick[1] in KEEP_ICON else "model:" + pick[2],
+            "label": _label(pick), "tip": _label(pick) + (f": {why}" if why else "") + ("  (hold for more)" if len(members) > 1 else ""),
+            "entry": pick, "members": members, "dim": bool(why)}
+
+
+SELECT_GROUP = [RECT, LIVE, LASSO]                        # the selection tools, one button with a fly-out
+
+
 def items(context, active_tool):
     out = [{"tool": None, "icon": "magnifier", "label": "Zoom to Border"}]
     for e in HEAD + _parts(context) + TAIL:
@@ -129,16 +146,7 @@ def items(context, active_tool):
             if out[-1] is not None:
                 out.append(None)
             continue
-        members = e if isinstance(e, list) else [e]
-        key = members[0][1]
-        pick = next((m for m in members if m[1] == active_tool), None)
-        if pick is not None:
-            _shown[key] = pick[1]
-        pick = next((m for m in members if m[1] == _shown.get(key)), members[0])
-        why = why_not(context, pick)
-        out.append({"tool": pick[1] if pick[0] == _T else None, "icon": pick[2] if pick[1] in KEEP_ICON else "model:" + pick[2],
-                    "label": _label(pick), "tip": _label(pick) + (f": {why}" if why else "") + ("  (hold for more)" if len(members) > 1 else ""),
-                    "entry": pick, "members": members, "dim": bool(why)})
+        out.append(item(context, e, active_tool))
     return out
 
 

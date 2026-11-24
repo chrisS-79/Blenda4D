@@ -25,6 +25,8 @@ def _after_load(*_args):
 
 
 def register():
+    from . import window_memory                           # the window goes back first, before anything is drawn
+    window_memory.early()
     from . import keymap
     keymap.add_preset_path()
     settings.register()

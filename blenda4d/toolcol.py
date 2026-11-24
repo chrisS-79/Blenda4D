@@ -178,6 +178,9 @@ def _items(window=None):
         if t is None:
             out.append(None)
             continue
+        if t == "builtin.select_box":                     # Rectangle, Live and Lasso Selection: one button, hold for the rest
+            out.append(modeltools.item(bpy.context, modeltools.SELECT_GROUP, bars.active_tool(bpy.context)))
+            continue
         out.append({"tool": t, "icon": bars.TOOL_ICONS.get(t, ""), "label": t.split(".", 1)[-1].replace("_", " ").title()})
     return out
 

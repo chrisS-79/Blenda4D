@@ -42,6 +42,8 @@ DEFORMERS = {
     "displace": ("Displace", "MOD_DISPLACE", "EMPTY", "Push the object's points in and out with a noise pattern", {}),
     "wave": ("Wave", "MOD_WAVE", "EMPTY", "Ripple the object with a travelling wave", {}),
 }
+from . import moclone_deform as _md  # noqa: E402  PolyFX and MoExtrude use this system too
+DEFORMERS.update(_md.KINDS)
 BOX_KINDS = ("bend", "bulge", "shear", "taper", "twist")
 FIT_KINDS = BOX_KINDS + ("lattice",)
 ORDER = ("Bend", "Bulge", "Shear", "Taper", "Twist", "Lattice", "Shrinkwrap", "Smooth", "Displace", "Wave")
@@ -222,9 +224,14 @@ def _ensure_tree(ob, kind, seen):
     if tree is None:
         tree = dn.build(ob, kind, DEFORMERS[kind][0])
         ob[TREE] = tree
+    elif kind in _md.FILL and list(ob.get(_md.SIG, [])) != _md.signature(ob):   # its Effectors list changed
+        _md.refill(tree, ob, kind)
     elif tree.name in seen or not _drives(tree, ob):         # a copied deformer: give it a tree of its own
-        tree = tree.copy()
-        dn.retarget(tree, ob)
+        if kind in _md.FILL:                                 # its drivers also read its effectors: build it afresh
+            tree = dn.build(ob, kind, DEFORMERS[kind][0])
+        else:
+            tree = tree.copy()
+            dn.retarget(tree, ob)
         ob[TREE] = tree
     seen.add(tree.name)
     if kind == "shrinkwrap":
@@ -627,6 +634,9 @@ def register():
         bpy.utils.register_class(c)
     for kind in DEFORMERS:
         label, icon, _form, tip, _start = DEFORMERS[kind]
+        if kind in _md.KINDS:
+            _md.register_kind(kind, _creator(kind))
+            continue
         kinds.add(kind, label, icon, create=_creator(kind), tabs=[("OBJECT", "Object")], pages={"OBJECT": PAGES[kind]},
                   describe=tip + " (with an object selected, it goes under that object)")
     by_label = {DEFORMERS[k][0]: k for k in DEFORMERS}

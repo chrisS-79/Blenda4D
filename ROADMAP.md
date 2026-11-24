@@ -25,7 +25,6 @@ own file under `blenda4d/` and plugs in through `kinds.py`, so most items touch 
 - More Symmetry, Boolean, Array, Instance and Connect options.
 - Quad remeshing (voxel only today) and more polygon-reduction controls.
 - A cage overlay for Subdivision Surface.
-- Children are read in name order (the Object Manager sorts by name); user-ordered children would be better.
 
 ## Deformers (`deformers.py`)
 - Drag handles in the viewport for strength and angle.

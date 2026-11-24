@@ -264,6 +264,10 @@ def build(ob, kind, label):
 
 
 def fill(tree, ob, kind):
+    from . import moclone_deform
+    if kind in moclone_deform.FILL:                  # PolyFX and MoExtrude build their own trees
+        moclone_deform.FILL[kind](tree, ob)
+        return
     g = G(tree)
     gin, gout = g.n.new("NodeGroupInput"), g.n.new("NodeGroupOutput")
     gout.is_active_output = True

@@ -215,24 +215,59 @@ ROWS_TOP_UNITS = 4.40        # where the first object row starts, in row heights
 STRIPE = (0.02, 0.02, 0.02, 1.0)      # added to every other Object Manager row: +5 grey levels, as in the original (Joseph, Nov 19)
 
 
+def om_key(ob):
+    """Object Manager order: the place it was dropped (b4d_om_order), then the name for objects never moved."""
+    return (ob.get("b4d_om_order", 1e9), ob.name)
+
+
+def siblings(parent, scene):
+    return sorted([o for o in scene.objects if o.parent == parent and not o.get("b4d_internal")], key=om_key)
+
+
+def place(objs, parent, before=None, after=None, scene=None):
+    """objs go under parent (None: top level) at that place among its children: before or after another child, or last.
+    Every child gets a number for its place, so the order stays as dropped."""
+    scene = scene or bpy.context.scene
+    reparent(objs, parent)
+    rest = [o for o in siblings(parent, scene) if o not in objs]
+    if before is not None and before in rest:
+        i = rest.index(before)
+    elif after is not None and after in rest:
+        i = rest.index(after) + 1
+    else:
+        i = len(rest)
+    order = rest[:i] + [o for o in sorted(objs, key=om_key)] + rest[i:]
+    for n, o in enumerate(order):
+        o["b4d_om_order"] = float(n)
+
+
 def visible_rows(context):
     """The Object Manager's rows in drawing order: (object, depth). Folded objects hide their children; the search
-    keeps an object when it or anything under it matches."""
+    keeps an object when it or anything under it matches. One pass over the scene builds who is under whom (asking
+    Blender for each object's children scans the whole scene every time, which made big scenes slow to draw)."""
     needle = context.window_manager.b4d_om_search.lower()
+    kids = {}
+    for ob in context.scene.objects:
+        if not ob.get("b4d_internal"):
+            kids.setdefault(ob.parent, []).append(ob)
+    for v in kids.values():
+        v.sort(key=om_key)
     out = []
 
+    def matches(ob):
+        if needle in ob.name.lower():
+            return True
+        return any(matches(c) for c in kids.get(ob, ()))
+
     def walk(ob, depth):
-        if ob.get("b4d_internal"):                        # Blenda's own helpers (MoClone's clone bodies)
-            return
-        if needle and needle not in ob.name.lower() and not any(needle in c.name.lower() for c in ob.children_recursive):
+        if needle and not matches(ob):
             return
         out.append((ob, depth))
-        if ob.children and not ob.b4d_om_closed:
-            for c in sorted(ob.children, key=lambda c: c.name):
+        if not ob.b4d_om_closed:
+            for c in kids.get(ob, ()):
                 walk(c, depth + 1)
-    for ob in context.scene.objects:
-        if ob.parent is None:
-            walk(ob, 0)
+    for ob in kids.get(None, ()):
+        walk(ob, 0)
     return out
 
 
@@ -303,13 +338,27 @@ class BLENDA4D_OT_om_drag(bpy.types.Operator):
         return roles.role(context.area) == "OBJECTS"
 
     def _target(self, context, event):
-        i = row_at(context, self.region, event.mouse_y)
+        """Where a drop would go, as the Object Manager shows it while dragging:
+        SELF (over the dragged objects: nothing), INTO:name (the middle of a row: under it), BEFORE:name / AFTER:name
+        (the top or bottom quarter of a row: a line there, the same level as that row), END (below the list: last at
+        the top level)."""
+        v = self.region.view2d.region_to_view(0, event.mouse_y - self.region.y)[1]
+        h = row_height()
+        f = -v / h - rows_top()                          # rows from the first row's top, with the fraction
+        i = int(f // 1) if f >= 0 else -1
         if i >= len(self.rows):
-            return TOP_LEVEL
+            return "END"
         if i < 0:
             return ""
         ob = self.rows[i][0]
-        return "" if ob in self.objs or any(_is_under(o, ob) for o in self.objs) else ob.name
+        if ob in self.objs or any(_is_under(o, ob) for o in self.objs):
+            return "SELF"
+        part = f - i
+        if part < 0.25:
+            return "BEFORE:" + ob.name
+        if part > 0.75:
+            return "AFTER:" + ob.name
+        return "INTO:" + ob.name
 
     def invoke(self, context, event):
         self.region = context.region
@@ -319,13 +368,16 @@ class BLENDA4D_OT_om_drag(bpy.types.Operator):
             return {"PASS_THROUGH"}
         src = self.rows[i][0]
         self.objs = [src] + ([o for o in context.selected_objects if o != src] if src.select_get() else [])
-        context.window_manager.b4d_om_drop = ""
-        context.window.cursor_modal_set("HAND")
+        context.window_manager.b4d_om_drop = "SELF"
+        _drag_mouse[:] = [event.mouse_x - self.region.x, event.mouse_y - self.region.y]
+        context.window.cursor_modal_set("STOP")
         context.window_manager.modal_handler_add(self)
+        self.region.tag_redraw()
         return {"RUNNING_MODAL"}
 
     def _end(self, context):
         context.window_manager.b4d_om_drop = ""
+        _drag_mouse[:] = []
         context.window.cursor_modal_restore()
         self.region.tag_redraw()
 
@@ -333,23 +385,37 @@ class BLENDA4D_OT_om_drag(bpy.types.Operator):
         wm = context.window_manager
         if event.type in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}:
             t = self._target(context, event)
+            _drag_mouse[:] = [event.mouse_x - self.region.x, event.mouse_y - self.region.y]
             if t != wm.b4d_om_drop:
+                context.window.cursor_modal_set("STOP" if t in ("SELF", "") else "DEFAULT")
                 wm.b4d_om_drop = t
-                self.region.tag_redraw()
+            self.region.tag_redraw()
             return {"RUNNING_MODAL"}
         if event.type == "LEFTMOUSE" and event.value == "RELEASE":
             self._end(context)
             if any(f(context, self.objs, event) for f in OM_DROP):     # let go over a tag's page: fills its object field
                 return {"FINISHED"}
             t = self._target(context, event)
-            if not t:
+            kind, _sep, name = t.partition(":")
+            target = bpy.data.objects.get(name) if name else None
+            if kind == "INTO" and target is not None:
+                place(self.objs, target)
+            elif kind in ("BEFORE", "AFTER") and target is not None:
+                place(self.objs, target.parent, before=target if kind == "BEFORE" else None, after=target if kind == "AFTER" else None)
+            elif kind == "END":
+                place(self.objs, None)
+            else:
                 return {"CANCELLED"}
-            n = reparent(self.objs, None if t == TOP_LEVEL else bpy.data.objects.get(t))
-            return {"FINISHED"} if n else {"CANCELLED"}
+            from . import generators
+            generators.sync_all()                       # a generator reads its children in this order
+            return {"FINISHED"}
         if event.type in {"ESC", "RIGHTMOUSE"}:
             self._end(context)
             return {"CANCELLED"}
         return {"RUNNING_MODAL"}
+
+
+_drag_mouse = []                 # the mouse in the Object Manager's region while dragging (for the cursor badge)
 
 
 class BLENDA4D_OT_om_rename(bpy.types.Operator):
@@ -625,22 +691,20 @@ class BLENDA4D_PT_objects(roles.RolePanel, bpy.types.Panel):
         for ob, depth in rows:
             self._row(col, ob, depth, tags, split)
 
-        if drop == TOP_LEVEL:
-            col.label(text="Move to top level", icon="TRIA_UP")
+
 
     def _row(self, col, ob, depth, tag_room=0, split=0.6):
         sp = col.split(factor=split, align=True)          # name side | a fixed-width status side: a long name or a
         row = sp.row(align=True)                          # larger Size never squeezes the dots and checks together
         if depth:
             row.separator(factor=1.6 * depth)
-        if ob.children:
-            row.operator("blenda4d.om_fold", text="", icon="DISCLOSURE_TRI_RIGHT" if ob.b4d_om_closed else "DISCLOSURE_TRI_DOWN",
-                         emboss=False).name = ob.name
+        if ob.children:                                   # the fold box is drawn over this button (_draw_rows)
+            row.operator("blenda4d.om_fold", text="", icon="BLANK1", emboss=False).name = ob.name
         else:
             row.label(text="", icon="BLANK1")
         name = row.row(align=True)
         name.alignment = "LEFT"
-        name.label(text=ob.name, **type_icon_kw(ob))     # a label, so a press here can start a drag (see om_drag)
+        name.label(text="", **type_icon_kw(ob))          # the name is drawn in its colour by _draw_rows (C4D look)
         right = sp.row(align=True)
         right.alignment = "RIGHT"
         right.operator("blenda4d.om_dot", text="", emboss=False, **dots_kw(ob)).name = ob.name   # viewport over render
@@ -1326,29 +1390,210 @@ def _draw_rows():
             continue
         if top < 0:
             break
-        ob = rows[i][0] if i < len(rows) else None
-        if ob is not None and ob.name == drop:
-            k = 0.95
-        elif ob is not None and ob == active and ob.select_get():
-            k = 0.6
-        elif ob is not None and ob.select_get():
-            k = 0.35
-        else:
-            k = None
-        if k is not None:
-            rects.append((bottom, top, (c[0] * k, c[1] * k, c[2] * k, 1.0)))
-        elif i % 2:                          # alternating dark and mid grey, to the bottom of the list
+        if i % 2:                            # alternating dark and mid grey, to the bottom of the list (the selection
+                                             # shows in the names' colour, as in C4D)
             rects.append((bottom, top, STRIPE))
         i += 1
-    if not rects:
-        return
     shader = gpu.shader.from_builtin("UNIFORM_COLOR")
-    gpu.state.blend_set("ADDITIVE")        # lightens the row behind the text instead of covering it
-    for y0, y1, col in rects:
-        batch = batch_for_shader(shader, "TRIS", {"pos": [(0, y0), (region.width, y0), (region.width, y1), (0, y1)]},
-                                 indices=[(0, 1, 2), (0, 2, 3)])
-        shader.uniform_float("color", col)
-        batch.draw(shader)
+    if rects:
+        gpu.state.blend_set("ADDITIVE")        # lightens the row behind the text instead of covering it
+        for y0, y1, col in rects:
+            batch = batch_for_shader(shader, "TRIS", {"pos": [(0, y0), (region.width, y0), (region.width, y1), (0, y1)]},
+                                     indices=[(0, 1, 2), (0, 2, 3)])
+            shader.uniform_float("color", col)
+            batch.draw(shader)
+        gpu.state.blend_set("NONE")
+    _draw_tree(context, region, rows, drop, shader)
+    if drop:
+        _draw_drop(context, region, rows, drop, shader)
+
+
+def _row_y(region, i):
+    h = row_height()
+    top = region.view2d.view_to_region(0, -(rows_top() + i) * h, clip=False)[1]
+    bottom = region.view2d.view_to_region(0, -(rows_top() + i + 1) * h, clip=False)[1]
+    return bottom, top
+
+
+def _zoom(region):
+    v2d = region.view2d
+    try:
+        return (v2d.view_to_region(0, 0, clip=False)[1] - v2d.view_to_region(0, -1000, clip=False)[1]) / 1000
+    except Exception:
+        return 1.0
+
+
+# Where the panel lays out a row's parts, in row heights from the region's left edge (measured on drawn rows)
+FOLD_CX, ICON_X, TEXT_X, INDENT = 0.9, 1.55, 2.75, 0.45
+SELECTED_NAME = (1.0, 0.769, 0.18, 1.0)             # C4D: the selected object's name, #FFC42E
+PARENT_NAME = (0.663, 0.4, 0.133, 1.0)              # C4D: the selected object's parents, #A96622
+TREE = (0.33, 0.33, 0.33, 1.0)                      # the hierarchy lines
+BOX = (0.58, 0.58, 0.58, 1.0)                       # the fold box
+
+
+def _unit(region):
+    return row_height() * _zoom(region)
+
+
+def _name_x(context, region, depth):
+    """Where a row's tree line starts, and where its name text starts, in region pixels."""
+    u = _unit(region)
+    return (FOLD_CX - 0.25 + depth * INDENT) * u, (TEXT_X + depth * INDENT) * u
+
+
+def _draw_tree(context, region, rows, drop, shader):
+    """The C4D look of the rows: hierarchy lines, fold boxes, and the names in white, yellow (selected) or orange
+    (a selected object's parents)."""
+    import blf
+    import gpu
+    from gpu_extras.batch import batch_for_shader
+    if not rows:
+        return
+    u = _unit(region)
+    s = context.preferences.system.ui_scale
+    sel = {o for o in context.selected_objects}
+    parents = set()
+    for o in sel:
+        p = o.parent
+        while p is not None:
+            parents.add(p)
+            p = p.parent
+    theme = context.preferences.themes[0].user_interface.wcol_regular.text
+    normal = (theme[0], theme[1], theme[2], 1.0)
+    kind, _sep, into = drop.partition(":") if drop else ("", "", "")
+    # which rows have a sibling below them (the line goes on down), level by level
+    n = len(rows)
+    nxt = [False] * n
+    for i in range(n):
+        d = rows[i][1]
+        for j in range(i + 1, n):
+            if rows[j][1] < d:
+                break
+            if rows[j][1] == d:
+                nxt[i] = True
+                break
+    lines, boxes, names = [], [], []
+    cont = {}                                            # level -> does the line at that level go on below
+    size = context.preferences.ui_styles[0].widget.points * s * _zoom(region)
+    for i, (ob, d) in enumerate(rows):
+        bottom, top = _row_y(region, i)
+        cont[d] = nxt[i]
+        if bottom > region.height or top < 0:
+            continue
+        mid = (top + bottom) / 2
+        cx = (FOLD_CX + d * INDENT) * u
+        for k in range(d):                               # the lines of the levels above that go on past this row
+            if cont.get(k):
+                kx = (FOLD_CX + k * INDENT) * u
+                lines += [(kx, bottom), (kx, top)]
+        lines += [(cx, top), (cx, mid), (cx, mid), ((ICON_X + d * INDENT) * u - 0.1 * u, mid)]
+        if nxt[i]:
+            lines += [(cx, mid), (cx, bottom)]
+        if ob.children:
+            boxes.append((cx, mid, ob.b4d_om_closed))
+        if kind == "INTO" and ob.name == into:
+            continue                                     # the drop target's name is drawn white on black (_draw_drop)
+        col = SELECTED_NAME if ob in sel else PARENT_NAME if ob in parents else normal
+        names.append(((TEXT_X + d * INDENT) * u, bottom + (top - bottom - size * 0.72) / 2, ob.name, col))
+    gpu.state.blend_set("ALPHA")
+    gpu.state.line_width_set(max(1.0, s))
+    shader.uniform_float("color", TREE)
+    if lines:
+        batch_for_shader(shader, "LINES", {"pos": lines}).draw(shader)
+    half = 0.21 * u
+    bg = context.preferences.themes[0].properties.space.back
+    for cx, cy, closed in boxes:
+        _rect(shader, cx - half, cy - half, cx + half, cy + half, (bg[0], bg[1], bg[2], 1.0))
+        box = [(cx - half, cy - half), (cx + half, cy - half), (cx + half, cy - half), (cx + half, cy + half),
+               (cx + half, cy + half), (cx - half, cy + half), (cx - half, cy + half), (cx - half, cy - half),
+               (cx - half * 0.55, cy), (cx + half * 0.55, cy)]
+        if closed:
+            box += [(cx, cy - half * 0.55), (cx, cy + half * 0.55)]
+        shader.uniform_float("color", BOX)
+        batch_for_shader(shader, "LINES", {"pos": box}).draw(shader)
+    gpu.state.line_width_set(1.0)
+    fid = 0
+    blf.size(fid, size)
+    for x, y, text, col in names:
+        blf.color(fid, *col)
+        blf.position(fid, x, y, 0)
+        blf.draw(fid, text)
+    gpu.state.blend_set("NONE")
+
+
+def _rect(shader, x0, y0, x1, y1, col):
+    from gpu_extras.batch import batch_for_shader
+    shader.uniform_float("color", col)
+    batch_for_shader(shader, "TRIS", {"pos": [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]}, indices=[(0, 1, 2), (0, 2, 3)]).draw(shader)
+
+
+def _draw_drop(context, region, rows, drop, shader):
+    """While dragging in the Object Manager: a white line where the objects will go between rows (its left end at the
+    level they will take), or the target's name in white on black when they go under it; a badge at the pointer."""
+    import blf
+    import gpu
+    kind, _sep, name = drop.partition(":")
+    names = [o.name for o, _d in rows]
+    s = context.preferences.system.ui_scale
+    z = _zoom(region)
+    gpu.state.blend_set("ALPHA")
+    split = _status_split(context, 2)
+    name_end = region.width * split - 4 * s
+    if kind in ("BEFORE", "AFTER", "END") and (name in names or kind == "END") and rows:
+        i = len(rows) - 1 if kind == "END" else names.index(name)
+        depth = 0 if kind == "END" else rows[i][1]
+        bottom, top = _row_y(region, i)
+        y = top if kind == "BEFORE" else bottom
+        x0, _tx = _name_x(context, region, depth)
+        _rect(shader, x0, y - 1 * s, name_end, y + 1 * s, (0.92, 0.92, 0.92, 1.0))
+    elif kind == "INTO" and name in names:
+        i = names.index(name)
+        bottom, top = _row_y(region, i)
+        _x0, tx = _name_x(context, region, rows[i][1])
+        fid = 0
+        size = context.preferences.ui_styles[0].widget.points * s * z
+        blf.size(fid, size)
+        w = blf.dimensions(fid, name)[0]
+        _rect(shader, tx - 3 * s * z, bottom + 1, min(tx + w + 4 * s * z, name_end), top - 1, (0.0, 0.0, 0.0, 1.0))
+        blf.color(fid, 1.0, 1.0, 1.0, 1.0)
+        blf.position(fid, tx, bottom + (top - bottom - size * 0.72) / 2, 0)
+        blf.draw(fid, name)
+    if _drag_mouse and kind in ("SELF", ""):
+        # can't drop here: a grey circle with a slash at the pointer
+        import math
+        from gpu_extras.batch import batch_for_shader
+        mx, my = _drag_mouse
+        cx, cy, r = mx + 12 * s, my - 14 * s, 6 * s
+        ring = []
+        for k in range(24):
+            a0, a1 = 2 * math.pi * k / 24, 2 * math.pi * (k + 1) / 24
+            ring += [(cx + math.cos(a0) * r, cy + math.sin(a0) * r), (cx + math.cos(a1) * r, cy + math.sin(a1) * r)]
+        d = r * 0.7
+        ring += [(cx - d, cy + d), (cx + d, cy - d)]
+        disc = [(cx, cy)] + [(cx + math.cos(2 * math.pi * k / 24) * r, cy + math.sin(2 * math.pi * k / 24) * r) for k in range(25)]
+        shader.uniform_float("color", (0.55, 0.55, 0.55, 1.0))
+        batch_for_shader(shader, "TRI_FAN", {"pos": disc}).draw(shader)
+        gpu.state.line_width_set(2.0 * s)
+        shader.uniform_float("color", (1.0, 1.0, 1.0, 1.0))
+        batch_for_shader(shader, "LINES", {"pos": ring}).draw(shader)
+        gpu.state.line_width_set(1.0)
+    if _drag_mouse and kind not in ("SELF", ""):
+        # the badge: a small box with an arrow, left for "goes here", down for "goes under"
+        mx, my = _drag_mouse
+        bx, by, b = mx + 14 * s, my - 22 * s, 7 * s
+        lines = [(bx, by), (bx + b, by), (bx + b, by), (bx + b, by + b), (bx + b, by + b), (bx, by + b), (bx, by + b), (bx, by)]
+        if kind == "INTO":
+            ax, ay = bx + b / 2, by + b + 9 * s
+            lines += [(ax, ay), (ax, by + b + 2 * s), (ax, by + b + 2 * s), (ax - 2.5 * s, by + b + 4.5 * s), (ax, by + b + 2 * s), (ax + 2.5 * s, by + b + 4.5 * s)]
+        else:
+            ay = by + b + 5 * s
+            lines += [(bx + b + 3 * s, ay), (bx + 1 * s, ay), (bx + 1 * s, ay), (bx + 3.5 * s, ay + 2.5 * s), (bx + 1 * s, ay), (bx + 3.5 * s, ay - 2.5 * s)]
+        from gpu_extras.batch import batch_for_shader
+        for col, wd in (((0, 0, 0, 0.8), 3.0), ((1, 1, 1, 1), 1.0)):
+            gpu.state.line_width_set(wd * s)
+            shader.uniform_float("color", col)
+            batch_for_shader(shader, "LINES", {"pos": lines}).draw(shader)
+        gpu.state.line_width_set(1.0)
     gpu.state.blend_set("NONE")
 
 

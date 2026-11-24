@@ -247,6 +247,8 @@ _busy = [False]
 
 @bpy.app.handlers.persistent
 def _sync(scene, depsgraph=None):
+    if not hasattr(scene, "objects"):                  # load_post passes the file's path, not a scene
+        scene = bpy.context.scene
     if _busy[0] or scene is None:
         return
     _busy[0] = True
